@@ -261,11 +261,11 @@ function drawOverlay(cv, W, cur) {
     }
     g.globalAlpha = 1;
   }
-  const earth = S.search?.epochs[S.frame]?.earth, inView = (x, y) => x > -20 && y > -20 && x < W + 20 && y < W + 20;
+  const inView = (x, y) => x > -20 && y > -20 && x < W + 20 && y < W + 20;
   if (S.cats) {
     g.font = `${11 * dpr}px "IBM Plex Mono", monospace`;
     for (const o of S.catalog) {               // known objects, drawn where they should be on this date
-      const [c, r] = K.toGrid(...K.propagate(o, cur.mjd, earth), S.c), [x, y] = toScreen(c, r, W);
+      const [c, r] = K.toGrid(...K.apparent(o, cur.mjd), S.c), [x, y] = toScreen(c, r, W);
       if (!inView(x, y)) continue;
       if (o.target) {                           // the named target: a dashed crosshair with a gap
         g.beginPath();
@@ -404,7 +404,9 @@ function renderFilm() {
 // ---------- selecting and measuring a source ----------
 function selGrid(mjd) {            // where the selected source is on a date, following its motion
   const s = S.sel, dt = (mjd - s.mjd0) / 365.25;
-  return K.toGrid(s.ra + s.pmra * dt / 3.6e6 / Math.cos(s.dec * Math.PI / 180), s.dec + s.pmde * dt / 3.6e6, S.c);
+  let east = s.pmra * dt / 1000, north = s.pmde * dt / 1000;                 // arcsec since the date it was selected on
+  if (s.plx > 0) { const a = K.parallax(s.ra, s.dec, s.plx, mjd), b = K.parallax(s.ra, s.dec, s.plx, s.mjd0); east += a[0] - b[0]; north += a[1] - b[1]; }
+  return K.toGrid(s.ra + east / 3600 / Math.cos(s.dec * Math.PI / 180), s.dec + north / 3600, S.c);
 }
 
 function selectGrid(col, row) {
@@ -427,14 +429,14 @@ function selectGrid(col, row) {
 
 function selectSky(ra, dec, mjd = S.frames[S.frame]?.mjd || K.REF_MJD, forced = null) {
   // a catalogue object within 1.5 px on this date lends its name and its proper motion
-  const [col, row] = K.toGrid(ra, dec, S.c), earth = S.search?.epochs[S.frame]?.earth;
+  const [col, row] = K.toGrid(ra, dec, S.c);
   let match = forced, md = 1.5;
   if (!match) for (const o of S.catalog) {
-    const [c, r] = K.toGrid(...K.propagate(o, mjd, earth), S.c), d = Math.hypot(c - col, r - row) - (o.target ? 1.5 : o.src === 'SIMBAD' ? 0.3 : 0);     // the named target wins a near tie
+    const [c, r] = K.toGrid(...K.apparent(o, mjd), S.c), d = Math.hypot(c - col, r - row) - (o.target ? 1.5 : o.src === 'SIMBAD' ? 0.3 : 0);     // the named target wins a near tie
     if (d < md) { md = d; match = o; }
   }
-  if (match && match.src !== 'CatWISE') [ra, dec] = K.propagate(match, mjd);      // a catalogue position is better than a centre found by eye, above all for saturated stars
-  S.sel = { ra, dec, mjd0: mjd, pmra: match?.pmra || 0, pmde: match?.pmde || 0, match, measuredPm: false };
+  if (match && match.src !== 'CatWISE') [ra, dec] = K.apparent(match, mjd);      // a catalogue position is better than a centre found by eye, above all for saturated stars
+  S.sel = { ra, dec, mjd0: mjd, pmra: match?.pmra || 0, pmde: match?.pmde || 0, plx: match?.plx > 0 ? match.plx : 0, match, measuredPm: false };
   measure(); syncUrl(); renderEye();
 }
 
@@ -473,6 +475,7 @@ function fitMotion() {
   const t = pts.map(m => (m.e.mjd - s.mjd0) / 365.25);
   // offsets on the sky in arcsec, measured from the grid centre: east is toward lower columns
   const east = pts.map(m => (mid - m.cen[0]) * K.PIX), north = pts.map(m => (m.cen[1] - mid) * K.PIX);
+  if (s.plx > 0) pts.forEach((m, i) => { const p = K.parallax(s.ra, s.dec, s.plx, m.e.mjd); east[i] -= p[0]; north[i] -= p[1]; });    // take the yearly parallax wobble out
   const fe = K.lineFit(t, east), fn = K.lineFit(t, north);
   if (!fe || !fn) return null;
   if (stacked) {                 // three or four points cannot show their own scatter: add the position error a faint dot really has
@@ -491,7 +494,7 @@ function showSource() {
   const badges = [];
   if (s.match) badges.push(['known', `in ${s.match.src}${s.match.type ? ` (${s.match.type})` : ''}`]);
   const [sc, sr] = K.toGrid(s.ra, s.dec, S.c), gaia = S.catalog.filter(o => o.src === 'Gaia DR3');      // checked now, not at click time: Gaia may load later
-  if (gaia.length && !gaia.some(o => { const [c, r] = K.toGrid(...K.propagate(o, s.mjd0), S.c); return Math.hypot(c - sc, r - sr) < 1.5; })) badges.push(['found', 'not in Gaia']);
+  if (gaia.length && !gaia.some(o => { const [c, r] = K.toGrid(...K.apparent(o, s.mjd0), S.c); return Math.hypot(c - sc, r - sr) < 1.5; })) badges.push(['found', 'not in Gaia']);
   const holes = S.meas.filter(m => m.hole).length;
   if (s.saturated) badges.push(['warn', holes ? `saturated: core blank in ${holes} of ${S.meas.length} exposures` : 'saturated: brightness unreliable']);
   else if (S.meas.length - good.length) badges.push(['', `${S.meas.length - good.length} of ${S.meas.length} exposures flagged`]);
@@ -539,9 +542,9 @@ function drawSpectrum() {
   $('#spec-sum').textContent = !line.length ? 'No usable measurements here: the core is blank (saturated) in every exposure. Brightness over time below uses its outer light.' :
     `${usable.length} measurements, one per exposure. Typical peak ${peak[1].toFixed(dp)} ${unit} (AB ${K.abMag(peak[1] * u).toFixed(1)}) near ${peak[0].toFixed(2)} µm. ` +
     (sat ? `Too bright for SPHEREx: ${S.meas.length - usable.length} exposures have a blank core and are not shown, and the rest (hollow) are near saturation, so treat this as a rough lower limit. `
-      : 'Aperture fluxes (radius 15″), no aperture correction: expect about 10 % low. ') + 'Hover a point to see the exposure it came from.';
-  const rows = ['wavelength_um,flux_uJy,err_uJy,mjd,detector,flagged,near_saturation,file'].concat(S.meas.map(m =>
-    [m.wave.toFixed(4), m.flux.toFixed(2), m.err.toFixed(2), m.e.mjd, m.e.det, +m.flagged, +m.sat, m.e.key.split('/').pop()].join(',')));
+      : 'Aperture fluxes (radius 15″); in our checks these agree with 2MASS to within 5 % at 2.2 µm. ') + 'Hover a point to see the exposure it came from.';
+  const rows = ['wavelength_um,flux_uJy,err_uJy,mjd,detector,flagged,near_saturation,blank_core,file'].concat(S.meas.map(m =>
+    [m.wave.toFixed(4), m.flux.toFixed(2), m.err.toFixed(2), m.e.mjd, m.e.det, +m.flagged, +m.sat, +m.hole, m.e.key.split('/').pop()].join(',')));
   $('#c-csv').href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
 }
 
@@ -566,7 +569,7 @@ function drawTimeChart() {
     $('#time-sum').textContent = `Measured from ${f.pts.length} ${f.stacked ? 'stacked dates (too faint in single exposures)' : 'exposures'} at ${S.wmin.toFixed(2)}–${S.wmax.toFixed(2)} µm: ` +
       `${f.total.toFixed(2)} ± ${f.err.toFixed(2)}″ per year toward ${f.pa.toFixed(0)}° (north = 0°, east = 90°).${sig < 4 ? ' That is not a significant motion.' : ''}${cat}` +
       (clash ? ' These do not agree: at these wavelengths the light here may come from a background star. Try another colour window.' : '') +
-      (s.saturated ? ' Located from the star’s outer light, which is less precise.' : '') + ' Filled = north, hollow = east.';
+      (s.plx > 0 ? ` Its parallax (${(s.plx / 1000).toFixed(2)}″, from the catalogue) is removed.` : '') + (s.saturated ? ' Located from the star’s outer light, which is less precise.' : '') + ' Filled = north, hollow = east.';
     return;
   }
   // brightness over time: each point divided by the source's own typical brightness at that wavelength,
@@ -594,7 +597,7 @@ function buildField() {
   const li = (cls, name, meta, on) => { const e = document.createElement('li'); e.innerHTML = `<span class="dot ${cls}"></span><span>${esc(name)}</span><span class="m">${esc(meta)}</span>`; e.onclick = on; return e; };
   $('#field').replaceChildren(
     ...S.movers.map(m => li(m.known ? '' : 'found', m.known ? m.known.name : 'Uncatalogued mover', `measured ${m.total.toFixed(2)} ± ${m.err.toFixed(2)}″/yr${m.known ? ` · catalogue ${totalPm(m.known).toFixed(2)}` : ''}`, () => { const [ra, dec] = K.fromGrid(m.col, m.row, S.c); selectSky(ra, dec, m.mjd0); })),
-    ...items.map(({ o }) => li('', o.name, `${o.type || ''}${totalPm(o) > 0.05 ? ` · ${totalPm(o).toFixed(2)}″/yr` : ''}`, () => { const [ra, dec] = K.propagate(o, S.frames[S.frame]?.mjd || K.REF_MJD); selectSky(ra, dec, undefined, o); })));
+    ...items.map(({ o }) => li('', o.name, `${o.type || ''}${totalPm(o) > 0.05 ? ` · ${totalPm(o).toFixed(2)}″/yr` : ''}`, () => { const [ra, dec] = K.apparent(o, S.frames[S.frame]?.mjd || K.REF_MJD); selectSky(ra, dec, undefined, o); })));
   if (!S.movers.length) $('#field-note').textContent = items.length ? 'Named objects in view, fastest first. Click one to measure it.' : '';
 }
 
@@ -623,7 +626,7 @@ async function scan() {             // measure the motion of every bright dot; l
     const total = Math.hypot(fe.b, fn.b), err = Math.hypot(fe.eb, fn.eb);
     if (total < 0.3 || total < 6 * err) continue;
     const col = mid - fe.a / K.PIX, row = mid + fn.a / K.PIX;
-    const known = S.catalog.filter(o => o.src !== 'CatWISE').map(o => ({ o, d: Math.hypot(...K.toGrid(...K.propagate(o, mjd0), S.c).map((v, k) => v - [col, row][k])) })).filter(x => x.d < 1.8).sort((a, b) => a.d - b.d)[0]?.o;
+    const known = S.catalog.filter(o => o.src !== 'CatWISE').map(o => ({ o, d: Math.hypot(...K.toGrid(...K.apparent(o, mjd0), S.c).map((v, k) => v - [col, row][k])) })).filter(x => x.d < 1.8).sort((a, b) => a.d - b.d)[0]?.o;
     S.movers.push({ col, row, pe: fe.b, pn: fn.b, total, err, mjd0, known });
   }
   S.movers.sort((a, b) => b.total - a.total);
@@ -714,7 +717,7 @@ async function wider() {
     if (!aladin) {
       aladin = AL.aladin('#aladin', { survey: HIPS[first], cooFrame: 'ICRSd', showLayersControl: false, showCooGridControl: false, showFullscreenControl: false, showProjectionControl: false, showSimbadPointerControl: false });
       const pick = document.createElement('select');
-      pick.setAttribute('aria-label', 'Sky survey');
+      pick.id = 'wide-survey'; pick.setAttribute('aria-label', 'Sky survey');
       for (const k in HIPS) pick.add(new Option(k, HIPS[k]));
       pick.onchange = () => aladin.setBaseImageLayer(pick.value);
       note.before(pick);
@@ -770,7 +773,7 @@ function init() {
   keys['?'] = () => $('#help').showModal();
   if (!('command' in HTMLButtonElement.prototype)) $('#b-help').onclick = keys['?'];     // browsers without invoker commands
   addEventListener('keydown', ev => {
-    if (ev.target.matches('input, select, textarea') || ev.metaKey || ev.ctrlKey || ev.altKey || $('#help').open) return;
+    if (ev.target.matches?.('input, select, textarea') || ev.metaKey || ev.ctrlKey || ev.altKey || $('#help').open) return;
     const k = keys[ev.key.toLowerCase()];
     if (k) { ev.preventDefault(); k(); }
   });

@@ -9,12 +9,13 @@ for (const t of index) {
   const epochOf = new Map(man.search.exposures.map(e => [e.key, e.epoch])), exps = [];
   for (const f of man.files) { const b = readFileSync(dir + f); exps.push(...K.parseFrames(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)).filter(e => e.ok)); }
   for (const e of exps) e.epoch = epochOf.get(e.key);
-  const pos = e => K.toGrid(...K.propagate(t.obj, e.mjd), c), mid = (size - 1) / 2;
+  const pos = e => K.toGrid(...K.apparent(t.obj, e.mjd), c), mid = (size - 1) / 2;
   // motion from the centre of light in every exposure
   const tt = [], east = [], north = []; let holes = 0, sat = 0;
   const meas = exps.map(e => { const [col, row] = pos(e), a = K.aperture(e, size, col, row), l = K.locate(e, size, col, row), w = K.wingFlux(e, size, col, row);
     holes += a.hole; sat += a.sat;
-    if (l && l[2] > 10) { tt.push((e.mjd - K.REF_MJD) / 365.25); east.push((mid - l[0]) * K.PIX); north.push((l[1] - mid) * K.PIX); }
+    if (l && l[2] > 10) { const px = t.obj.plx > 0 ? K.parallax(t.ra, t.dec, t.obj.plx, e.mjd) : [0, 0];       // take the yearly parallax wobble out
+      tt.push((e.mjd - K.REF_MJD) / 365.25); east.push((mid - l[0]) * K.PIX - px[0]); north.push((l[1] - mid) * K.PIX - px[1]); }
     return { e, a, wing: w.ok ? w.flux : NaN, wave: K.waveAt(e, size, col, row) }; });
   const fe = K.lineFit(tt, east), fn = K.lineFit(tt, north), cat = Math.hypot(t.obj.pmra, t.obj.pmde) / 1000;
   const saturated = meas.filter(m => m.a.sat || m.a.hole).length > 0.3 * meas.length;

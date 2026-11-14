@@ -38,20 +38,24 @@ Measured with `node scripts/validate.mjs`, which uses the same routines as the p
 
 | Target | What Blink 102 shows | Measured | Catalogue |
 |---|---|---|---|
-| **Barnard's Star** | Steps north between the three passes (Sep 2025, Apr 2026, Sep 2026) | 10.29 ± 0.50″/yr toward 352° | 10.39″/yr toward 356° |
-| **eps Indi B** | Drifts across four passes; its spectrum shows the J, H and K peaks, methane absorption and a 4.1 µm peak of 59 mJy | 4.49 ± 0.06″/yr toward 126° | 4.68″/yr toward 122° |
+| **Barnard's Star** | Steps north between the three passes (Sep 2025, Apr 2026, Sep 2026) | 10.38 ± 0.46″/yr | 10.39″/yr |
+| **eps Indi B** | Drifts across four passes; its spectrum shows the J, H and K peaks, methane absorption and a 4.1 µm peak of 59 mJy | 4.59 ± 0.04″/yr | 4.68″/yr |
 | **WISE 0855−0714** | Invisible at short wavelengths; a dot at 3.8–5.0 µm that follows the predicted track | 450–550 µJy (AB ≈ 17.1), signal-to-noise 9–17 per date, within 4″ of the predicted position on every date; motion from the three stacked dates 5.7 ± 1.1″/yr toward 270° | W2 = 13.9 mag (≈ 480 µJy); 8.15″/yr toward 275° |
 | **RW Aur** | Brightness changes between passes, differently at different wavelengths | 0.69 mag change at 3.8–5.0 µm, 0.12 mag over all colours (from its outer light) | irregular variable |
 | **R Dra** | Brightness swings over 17 monthly dates | 1.7 mag range (faintest Sep–Oct 2025 and Jun 2026, about 245 days apart) | Mira variable, period ≈ 246 days |
+
+Motions are fitted to the centre of light in every single exposure, after removing the catalogue parallax.
+
+**Flux check against 2MASS** (`node scripts/fluxcheck.mjs`): for four isolated, unsaturated field stars (Ks 10.4–11.4), the flux Blink 102 measures near 2.16 µm is 0.99, 1.01, 1.02 and 1.05 times the 2MASS Ks flux. A fifth 2MASS source in the eps Indi field has nothing at its 1999 position: it is eps Indi B itself, which has since moved 2′.
 
 Honest limits:
 
 - **Barnard's Star, RW Aur and R Dra are too bright for SPHEREx.** Their cores are saturated (blank or flagged) in most exposures. Blink 102 says so with a badge, locates them from their unsaturated outer light, and measures their brightness changes from that outer light. Their absolute spectra are not reliable.
 - **WISE 0855's motion** comes from only three stacked dates, one of them shallow (11 exposures), so it is uncertain: the direction is right and the speed is 2σ low.
-- **eps Indi B** is measured 4 % below the catalogue motion. It is a close pair of brown dwarfs orbiting each other, and parallax is not removed.
+- **eps Indi B** is measured 2 % below the catalogue motion. It is a close pair of brown dwarfs orbiting each other, which a single straight line does not describe.
 - **The challenge's coordinates for WISE 0855 are its position around 2010.** It has since moved about 2′. Blink 102 recentres on where an object is now, and offers to recentre when you type old coordinates.
 - **WISE 0855 at short wavelengths:** a faint background star sits a few arcseconds from its current position, so light measured there below 2.4 µm is not the brown dwarf. The motion readout warns when measured and catalogue motions disagree.
-- Fluxes are aperture sums (radius 15″) with no aperture correction, so expect them about 10 % low.
+- Fluxes are aperture sums (radius 15″). We measured the light outside that aperture on field stars: 2–4 % at 0.75–2.4 µm, too small and too noisy from one or two stars per field to be worth applying, so no correction is made.
 - The motion scan can be fooled next to a very bright moving star, whose glow drags neighbours' centres along. It prints the catalogue value beside each measurement for comparison.
 
 ## How it works
@@ -110,11 +114,16 @@ Deploys to Vercel as static files plus three Python functions (`vercel.json`).
 
 ## AI use
 
-This project was built with AI assistance, as the Space Apps rules allow, and we declare it here.
+This project was built with heavy AI assistance, as the Space Apps rules allow, and we declare it here in full.
 
 - **Tool:** Claude (Anthropic), used through Claude Code.
-- **What it wrote:** the code in `api/`, `public/`, `scripts/` and `dev.py`, and the first draft of this README. Every source file says so in its header comment.
-- **What it did not generate:** no images, video or audio. All pictures on the site are drawn from NASA SPHEREx data.
-- **Human work:** the team chose the challenge, set the direction and the feature list, reviewed and tested the tool on the test targets, and is responsible for the submission.
+- **What the AI did:**
+  - wrote the code in `api/`, `public/`, `scripts/` and `dev.py` (every source file says so in its header);
+  - read the SPHEREx documentation, data formats and the papers listed above, and worked out how to read the files;
+  - proposed the technical design, the interface design, the name "Blink 102" and the blink-comparator framing;
+  - ran the checks reported in this README and wrote its first draft.
+- **What the AI did not generate:** no images, video or audio. Every picture on the site is drawn from NASA SPHEREx data.
+- **What people did:** Shrestha Pandey chose the challenge, confirmed the rules with the organizers, directed the build, decided its scope and approved each stage.
+- *Team: add here, before submitting, what each of you did yourselves (testing on the targets, usability tests, the video, the write-up).*
 
 No code from any earlier prototype was reused; this repository was started during the event.

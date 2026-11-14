@@ -149,9 +149,9 @@ button, .plate { transition: border-color .14s ease-out, background-color .14s e
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
 /* embed: only the eyepiece, the plate rack and the filter strip */
-.embed .top, .embed .tagline, .embed .right, .embed footer, .embed .under, .embed .coach, .embed .tools { display: none; }
+.embed .top, .embed .tagline, .embed .right, .embed footer, .embed .under, .embed .coach, .embed .tools, .embed .notice { display: none; }
 .embed main { grid-template-columns: 1fr; padding: 8px; }
-.embed .eye { max-height: calc(100dvh - 150px); max-width: calc(100dvh - 150px); }
+.embed .eye { max-height: calc(100dvh - 170px); max-width: calc(100dvh - 170px); }
 
 @media (max-width: 900px) {
   main { grid-template-columns: 1fr; padding: 8px; }

@@ -28,6 +28,23 @@ export function propagate(o, mjd, earth) {
   return [ra, dec];
 }
 
+/** Earth's position (AU, equatorial) from the Astronomical Almanac's low-precision Sun: good to 0.01 AU. */
+export function earth(mjd) {
+  const n = mjd - 51544.5, g = (357.528 + 0.9856003 * n) * RAD;
+  const lam = (280.460 + 0.9856474 * n) * RAD + (1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * RAD;
+  const R = 1.00014 - 0.01671 * Math.cos(g) - 0.00014 * Math.cos(2 * g), eps = (23.439 - 0.0000004 * n) * RAD;
+  return [-R * Math.cos(lam), -R * Math.cos(eps) * Math.sin(lam), -R * Math.sin(eps) * Math.sin(lam)];
+}
+
+/** Parallax shift [east, north] in arcsec of a star with parallax `plx` (mas) on a date. */
+export function parallax(ra, dec, plx, mjd) {
+  const [X, Y, Z] = earth(mjd), a = ra * RAD, d = dec * RAD, p = plx / 1000;
+  return [p * (X * Math.sin(a) - Y * Math.cos(a)), p * (X * Math.cos(a) * Math.sin(d) + Y * Math.sin(a) * Math.sin(d) - Z * Math.cos(d))];
+}
+
+/** Where a catalogue object appears on a date: proper motion plus parallax. */
+export const apparent = (o, mjd) => propagate(o, mjd, earth(mjd));
+
 /** Sky -> grid [col, row]. Gnomonic, north up, east at column 0, row 0 at the south edge. */
 export function toGrid(ra, dec, c) {
   const da = (ra - c.ra) * RAD, d = dec * RAD, d0 = c.dec * RAD;
@@ -192,9 +209,33 @@ export function aperture(e, size, col, row, r = 2.5, rin = 5, rout = 8) {
     if (e.cat[p] & NEAR_SAT) sat = true;
     sum += w * (x - sky); area += w;
   }
-  const flux = sum * UJY;
-  const err = Math.hypot(Math.sqrt(area) * e.noise * UJY, 0.03 * flux);
-  return { flux, err, sky, flagged: flagged || hole, sat, hole, ok: !missing && area > 0 };
+  const flux = sum * UJY, stat = Math.sqrt(area) * e.noise * UJY;
+  return { flux, err: Math.hypot(stat, 0.03 * flux), snr: flux / stat, sky, flagged: flagged || hole, sat, hole, ok: !missing && area > 0 };
+}
+
+/**
+ * Aperture correction per detector, measured on this field's own stars: how much more light a 6-pixel aperture
+ * collects than the 2.5-pixel one. `stars` are [col, row] of bright, isolated, unsaturated stars.
+ * Returns {det: {f, n}} for detectors with at least 8 clean measurements.
+ */
+export function apertureCorrection(exps, size, stars) {
+  const ratios = {};
+  for (const [c, r] of stars) for (const e of exps) {
+    const a = aperture(e, size, c, r, 2.5, 8, 11), b = aperture(e, size, c, r, 6, 8, 11);
+    if (!a.ok || !b.ok || a.flagged || b.flagged || a.sat || b.sat || a.snr < 40) continue;
+    const q = b.flux / a.flux;
+    if (q > 0.9 && q < 2) (ratios[e.det] ||= []).push(q);
+  }
+  const out = {};
+  for (const d in ratios) if (ratios[d].length >= 8) out[d] = { f: median(ratios[d]), n: ratios[d].length };
+  return out;
+}
+
+/** Bright stars with no neighbour above 3 % of their brightness within `clear` pixels, away from the edges. */
+export function isolatedStars(img, size, thresh, faint, clear = 11, edge = 12) {
+  const all = findPeaks(img, size, faint, 2, 2);
+  return findPeaks(img, size, thresh, 3, edge).filter(p => all.every(q => q === p || (q[0] === p[0] && q[1] === p[1]) ||
+    Math.hypot(q[0] - p[0], q[1] - p[1]) > clear || q[2] < 0.03 * p[2]));
 }
 
 /** Brightness from the unsaturated outer light of a star (ring 4-8 px), for stars too bright for their core. */
@@ -318,6 +359,8 @@ if (typeof process !== 'undefined' && process.argv[1]?.endsWith('sky.js')) {
   // Barnard's Star: J2000 position plus 16 years of proper motion must equal Gaia's 2016.0 declination
   const b = propagate({ ra: 269.45207696, dec: 4.69336497, pmra: -801.551, pmde: 10362.394 }, GAIA_EPOCH);
   near(b[1], 4.73942005, 2e-5); near(b[0], 269.44850253, 2e-5);
+  const ea = earth(60930); near(ea[0], 0.9846, 0.012); near(ea[1], -0.1790, 0.012); near(ea[2], -0.0775, 0.012);   // astropy's values for that date
+  const px = parallax(269.4463, 4.7679, 546.9, 61137); near(px[0], 0.5238, 0.01); near(px[1], 0.0766, 0.01);      // checked against astropy
   const c = { ra: 133.7589, dec: -7.2421, size: 64 };
   const g = toGrid(...fromGrid(10.3, 50.7, c), c); near(g[0], 10.3, 1e-6); near(g[1], 50.7, 1e-6);
   near(toGrid(c.ra, c.dec + PIX / 3600, c)[1], 32.5, 1e-6);          // one pixel north is one row up
