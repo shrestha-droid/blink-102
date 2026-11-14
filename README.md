@@ -12,7 +12,7 @@ Built during NASA Space Apps Challenge 2026 (14–15 November 2026) for the chal
 
 Type a sky position or an object name. Blink 102 finds every image NASA's SPHEREx telescope has released of that spot, lines them all up, and flips between dates like a blink comparator, the instrument Clyde Tombaugh used to find Pluto in 1930. Anything that moved or changed brightness catches the eye.
 
-SPHEREx photographs the sky in 102 infrared colours, so Blink 102 also lets you:
+SPHEREx photographs the sky in 102 infrared colours, and Blink 102 shows them: each wavelength is drawn in its own colour from the colour bar, with one brightness scale for all of them, so a dot's colour is the real shape of its spectrum. Ordinary stars look white to amber; a cold brown dwarf, bright only at the long end, glows red to magenta. Blink 102 also lets you:
 
 - **choose the colours** that go into the picture with one slider (or press **Sweep** to slide through all of them);
 - **click any star** to get its spectrum, its brightness over time and its measured motion, from every single exposure;

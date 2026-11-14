@@ -67,7 +67,7 @@ try { const t = localStorage.getItem('blink-theme'); if (t) document.querySelect
         <label class="row" for="t-fov">Field<select id="t-fov"><option value="48">4.9′</option><option value="64" selected>6.6′</option><option value="96">9.8′</option><option value="128">13′</option><option value="160">16′</option></select></label>
         <h3>Compare</h3>
         <button id="t-diff" type="button" class="row" aria-pressed="false" title="Each date minus the others: a mover shows as a bright and dark pair">Difference<kbd>D</kbd></button>
-        <button id="t-rgb" type="button" class="row" aria-pressed="false" title="Three wavelength ranges as blue, green, red: cold objects look red">Colour<kbd>C</kbd></button>
+        <button id="t-rgb" type="button" class="row" aria-pressed="true" title="Each dot in its own infrared colour: white is bright at every colour, magenta only at the longest">Colour<kbd>C</kbd></button>
         <button id="t-follow" type="button" class="row" aria-pressed="false" title="Hold the selected object still and let the sky move behind it">Follow<kbd>T</kbd></button>
         <button id="t-all" type="button" class="row" aria-pressed="false" title="Stack every date into one deep picture">All dates<kbd>A</kbd></button>
         <h3>Overlays</h3>
@@ -155,6 +155,7 @@ try { const t = localStorage.getItem('blink-theme'); if (t) document.querySelect
     <li><b>The picture</b> is the same small patch of sky, photographed by NASA's SPHEREx telescope on different dates. It flips between dates, so anything that moved or changed brightness catches your eye.</li>
     <li><b>The row of small pictures</b> is one picture per date. Each is built by stacking every exposure SPHEREx took of this spot during that pass.</li>
     <li><b>The colour bar</b> is infrared wavelength, 0.75 to 5.0 µm in 102 steps. Drag the window to choose which colours go into the picture. Some objects only exist at one end.</li>
+    <li><b>The colours in the picture are real.</b> Each wavelength is drawn in its colour from the bar, so a star bright at every wavelength looks white and a cold brown dwarf, bright only at the long end, looks red to magenta.</li>
     <li><b>Click a star</b> to measure it in every exposure: its spectrum, how its brightness changed, and how fast it moves.</li>
     <li><b>Green rings</b> are stars already in catalogues, drawn where they should be on each date. A dot that moves with no ring is worth a second look.</li>
   </ol>

@@ -91,13 +91,28 @@ main { flex: 1; min-height: 0; display: grid; grid-template-columns: auto minmax
   pointer-events: none; padding: 9px 11px; white-space: pre-line; font-variant-numeric: tabular-nums; }
 .hud.tl { top: 0; left: 0; } .hud.tr { top: 0; right: 0; text-align: right; }
 .hud.bl { bottom: 0; left: 0; } .hud.br { bottom: 0; right: 0; text-align: right; }
-.hud b { font: italic 500 17px/1.25 var(--serif); letter-spacing: 0; display: inline-block; margin-bottom: 1px; }
+.hud b { font: italic 500 25px/1.1 var(--serif); letter-spacing: -.015em; display: inline-block; margin-bottom: 4px; }
 .hud i { font-style: normal; color: light-dark(#4d4a43, #b9b6b0); }
 .load { position: absolute; left: 50%; bottom: 14px; translate: -50% 0; font: 11px var(--mono); color: var(--ink); text-shadow: 0 0 4px var(--sky), 0 0 2px var(--sky); pointer-events: none; }
 .load:empty { display: none; }
 .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; pointer-events: none; }
 .bar i { display: block; height: 100%; width: 0; background: var(--t1); transition: width .2s linear, opacity .4s .3s; }
 .bar i.done { opacity: 0; }
+
+/* the opening */
+.intro { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; justify-content: flex-end; gap: 6px; padding: 26px 26px 30px; cursor: pointer;
+  background: linear-gradient(to top, #000d 0%, #0008 32%, transparent 60%); color: #ECE8E1; animation: in .5s ease-out both; }
+.intro.plate-phase { background: linear-gradient(to top, #F7F4ECf0 0%, #F7F4EC99 34%, transparent 62%); color: #1B1A17; }
+.intro.out { animation: out .5s ease-in both; }
+.i-year { margin: 0; font: italic 500 64px/1 var(--serif); letter-spacing: -.03em; }
+.i-line { margin: 0; font: italic 19px/1.35 var(--serif); max-width: 28ch; }
+.i-skip { position: absolute; top: 14px; right: 16px; font: 10px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: inherit; opacity: .6; }
+.intro-on .hud, .intro-on .load { opacity: 0; }
+.reveal #img { animation: in 1s ease-out both; }
+@keyframes in { from { opacity: 0; } }
+@keyframes out { to { opacity: 0; } }
+@keyframes rise { from { opacity: 0; translate: 0 8px; } }
+.plate, .gap { animation: rise .55s cubic-bezier(.2, .7, .2, 1) both; animation-delay: calc(var(--i, 0) * 70ms); }
 
 /* tool rail: a list, not a wall of boxes. State is a small square and ink. */
 .tools { width: var(--rail); flex: none; display: flex; flex-direction: column; padding-top: var(--bz); }
@@ -139,9 +154,11 @@ input[type=range]::-moz-range-thumb { width: 7px; height: 13px; background: var(
 .strip-read { margin: 0 0 5px; display: flex; justify-content: space-between; align-items: baseline; font: 11px var(--mono); color: var(--mute); font-variant-numeric: tabular-nums; }
 .strip-read b { color: var(--ink); font-weight: 500; }
 .strip-btns { display: flex; gap: 16px; font-family: var(--sans); font-size: 12px; }
-.strip { position: relative; height: 26px; user-select: none; touch-action: none; overflow: hidden; }
+.strip { position: relative; height: 30px; user-select: none; touch-action: none; overflow: hidden; }
 .segs { position: absolute; inset: 0; }
-.seg { position: absolute; top: 0; bottom: 0; border-radius: 0; padding: 0 5px; font: 500 10px/26px var(--mono); letter-spacing: .06em; text-align: left; color: light-dark(#fff, #0A0A0B); overflow: hidden; box-shadow: inset -1px 0 0 var(--bg); }
+.seg { position: absolute; top: 0; bottom: 0; border-radius: 0; padding: 0 6px; font: 500 10px/30px var(--mono); letter-spacing: .06em; text-align: left; color: light-dark(#fff, #0A0A0B); overflow: hidden; box-shadow: inset -1px 0 0 light-dark(#fff6, #0A0A0B66); mix-blend-mode: normal; }
+.seg:nth-child(n+4) { color: #fff; }
+.seg:hover { background: light-dark(#fff2, #0A0A0B22); }
 .win { position: absolute; top: 0; bottom: 0; box-shadow: 0 0 0 100vmax light-dark(#F3EFE6c8, #0A0A0Bc8); outline: 1.5px solid var(--sel); outline-offset: -1.5px; cursor: grab; }
 .win .h { position: absolute; top: 0; bottom: 0; width: 14px; cursor: ew-resize; }
 .win .h0 { left: -7px; } .win .h1 { right: -7px; }
@@ -210,7 +227,7 @@ dialog::backdrop { background: #000a; overflow: hidden; overscroll-behavior: con
 
 /* interface motion only; the image itself never animates except the blink and the sweep */
 button, .plate canvas { transition: color .14s ease-out, border-color .14s ease-out, opacity .14s ease-out; }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
 /* embed: only the eyepiece, the plate rack and the filter strip */
 .embed { --eye: clamp(240px, min(calc(100dvh - 190px), calc(100vw - 80px)), 900px); }

@@ -74,18 +74,24 @@ export function scatter(svg, o) {
     svg.append(el('path', { d: `M${x0} ${m.t - 2}v-4H${x1}v4`, class: 'ch-mark' }));
     svg.append(el('text', { x: (x0 + x1) / 2, y: m.t - 9, 'text-anchor': 'middle', class: 'ch-tick' }, k.label));
   }
-  const g = el('g');
+  const g = el('g'), lines = el('g');
+  if (o.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const id = `wipe${Math.random().toString(36).slice(2, 8)}`, cp = el('clipPath', { id }), r = el('rect', { x: 0, y: 0, width: 0, height: H });
+    r.append(el('animate', { attributeName: 'width', from: 0, to: W, dur: '1.1s', fill: 'freeze', calcMode: 'spline', keyTimes: '0;1', keySplines: '.25 .7 .2 1' }));
+    cp.append(r); svg.append(cp);
+    g.setAttribute('clip-path', `url(#${id})`); lines.setAttribute('clip-path', `url(#${id})`);
+  }
   for (const p of pts) {
     if (p.e > 0 && !o.ylog) g.append(el('line', { x1: X(p.x), x2: X(p.x), y1: Y(p.y - p.e), y2: Y(p.y + p.e), stroke: p.color, 'stroke-width': 1, opacity: 0.45 }));
     g.append(el('circle', { cx: X(p.x), cy: Y(p.y), r: p.hollow ? 2.6 : 3, fill: p.hollow ? 'none' : p.color, stroke: p.color, 'stroke-width': p.hollow ? 1 : 0, opacity: p.hollow ? 0.6 : 0.95 }));
   }
-  svg.append(g);
+  svg.append(g, lines);
   for (const l of o.lines || []) {
     const d = l.pts.filter(q => isFinite(q[1]) && (!o.ylog || q[1] > 0)).map((q, i) => `${i ? 'L' : 'M'}${X(q[0]).toFixed(1)} ${Y(q[1]).toFixed(1)}`).join('');
-    if (d) svg.append(el('path', { d, fill: 'none', stroke: l.color || 'currentColor', 'stroke-width': l.width || 1.5, 'stroke-dasharray': l.dash || '' }));
+    if (d) lines.append(el('path', { d, fill: 'none', stroke: l.color || 'currentColor', 'stroke-width': l.width || 1.5, 'stroke-dasharray': l.dash || '', 'stroke-linejoin': 'round' }));
     if (l.label && l.pts.length) {
       const q = l.pts[l.pts.length - 1];
-      svg.append(el('text', { x: Math.min(X(q[0]) + 4, W - m.r - 2), y: Y(q[1]) - 5, 'text-anchor': 'end', class: 'ch-tick' }, l.label));
+      lines.append(el('text', { x: Math.min(X(q[0]) + 4, W - m.r - 2), y: Y(q[1]) - 5, 'text-anchor': 'end', class: 'ch-tick' }, l.label));
     }
   }
   // hover: nearest point within 24 px, a ring on it and a tooltip

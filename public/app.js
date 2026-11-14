@@ -23,6 +23,7 @@ const S = {                      // everything the page shows is derived from th
   lim: null, sel: null, meas: [], peek: null, catalog: [], movers: [], tab: 'lc', log: false, mol: false, bb: false, sweep: null, follow: false, merge: false,
 };
 let cacheIndex = null, dirty = false, timer = null;
+if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__S = S;      // dev only: inspect state from the console
 
 // ---------- small helpers ----------
 const rgb = s => s.match(/[\d.]+/g).slice(0, 3).map(Number);
@@ -116,7 +117,7 @@ async function fetchChunks(chunks, gen) {
         if (gen !== S.gen) return;
         for (const e of list) {
           if (!e.ok) { S.failed++; continue; }
-          e.epoch = S.byKey.get(e.key)?.epoch ?? 0;
+          e.epoch = S.byKey.get(e.key)?.epoch ?? 0; e.t = performance.now();
           S.exps.push(e);
         }
       } catch { S.failed += ch.keys?.length || 0; }
@@ -179,21 +180,50 @@ function rawFrames() {
   return S.raw.frames;
 }
 
+// ---------- infrared colour: every wavelength drawn in its own colour from the warm ramp ----------
+const RAMP = ['#F6E8B1', '#F5BE4A', '#F08C3A', '#E2553F', '#CC3B74', '#A24AA8'].map(h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255));
+const RAMP_AT = K.DET.map(([a, b]) => Math.log(Math.sqrt(a * b)));
+/** The ramp colour of a wavelength (um): the same colours as the colour bar, interpolated between detector centres. */
+function waveColor(w) {
+  const x = Math.log(w);
+  if (x <= RAMP_AT[0]) return RAMP[0];
+  if (x >= RAMP_AT[5]) return RAMP[5];
+  let i = 0;
+  while (x > RAMP_AT[i + 1]) i++;
+  const u = (x - RAMP_AT[i]) / (RAMP_AT[i + 1] - RAMP_AT[i]);
+  return RAMP[i].map((v, k) => v + (RAMP[i + 1][k] - v) * u);
+}
+/** Colour bins for the current window: six for a wide window (each dot gets its own colour), none for a narrow one (tint). */
+function colourBins() {
+  const narrow = LN(S.wmax / S.wmin) < 0.35, n = narrow ? 0 : 6;
+  const edges = Array.from({ length: n + 1 }, (_, i) => Math.exp(LN(S.wmin) + (LN(S.wmax) - LN(S.wmin)) * i / n));
+  return { narrow, tint: waveColor(Math.sqrt(S.wmin * S.wmax)), edges, cols: edges.slice(0, -1).map((a, i) => waveColor(Math.sqrt(a * edges[i + 1]))) };
+}
+/** Swap light and dark but keep the hue, for the Plate theme. */
+function invertLightness(R, G, B) {
+  const mx = Math.max(R, G, B), mn = Math.min(R, G, B), l = (mx + mn) / 2, d = mx - mn;
+  if (d < 1e-6) return [1 - l, 1 - l, 1 - l];
+  const s = d / (1 - Math.abs(2 * l - 1)), L = 1 - l, C = (1 - Math.abs(2 * L - 1)) * s, m = L - C / 2;
+  return [R, G, B].map(v => m + (v - mn) / d * C);
+}
+const smooth = (x, a, b) => { const u = Math.min(1, Math.max(0, (x - a) / (b - a))); return u * u * (3 - 2 * u); };
+
 // ---------- frames: one stacked picture per date ----------
 const inBand = e => e.wave >= S.wmin && e.wave <= S.wmax;
 function invalidate(restack = true) {
   if (restack) dirty = true;
-  if (!timer) timer = setTimeout(() => { timer = null; if (dirty) { dirty = false; computeFrames(); if (S.sel) measure(); } renderAll(); }, 60);
+  if (!timer) timer = setTimeout(() => { timer = null; if (dirty) { dirty = false; computeFrames(); if (S.sel) measure(); } renderAll();
+    if (S.introPending && S.frames.length > 1 && S.frames.every(Boolean)) { S.introPending = false; intro(); } }, 60);
 }
 
 function computeFrames() {
   if (!S.search) return;
-  const size = S.size, thirds = [0, 1, 2].map(i => Math.exp(LN(S.wmin) + (LN(S.wmax) - LN(S.wmin)) * i / 3)).concat(S.wmax);
+  const size = S.size, bins = S.bins = colourBins();
   const build = (list, ep) => {
     if (!list.length) return null;
     const ex = list.map(viewExp), f = K.stack(ex, size);
     f.count = ex.length; f.mjd = K.median(ex.map(e => e.mjd)); f.epoch = ep; f.span = [Math.min(...ex.map(e => e.mjd)), Math.max(...ex.map(e => e.mjd))];
-    if (S.rgb) f.rgb = [2, 1, 0].map(k => { const sub = ex.filter(e => e.wave >= thirds[k] && e.wave <= thirds[k + 1]); return sub.length ? K.stack(sub, size).img : null; });
+    if (S.rgb && !bins.narrow) f.rgb = bins.cols.map((_, k) => { const sub = ex.filter(e => e.wave >= bins.edges[k] && e.wave <= bins.edges[k + 1]); return sub.length ? K.stack(sub, size).img : null; });
     return f;
   };
   if (S.merge) { const one = build(S.exps.filter(inBand), null); S.frames = S.search.epochs.map(() => one); }      // every date in one deep picture
@@ -208,7 +238,7 @@ function computeFrames() {
   const lims = imgs => { const big = imgs.flatMap(a => Array.from(a)), [med, sig] = K.robust(big); return { lo: med - 2 * sig, sig: sig || 1e-6, hi: K.percentile(big, 0.995) }; };
   S.lim = lims(live.map(f => f.img));           // one set of limits for every date, so brightness changes are real
   if (S.diff) S.lim.dsig = K.robust(live.flatMap(f => Array.from(f.diff)))[1] || 1e-6;
-  if (S.rgb) S.lim.rgb = [0, 1, 2].map(k => { const im = live.map(f => f.rgb[k]).filter(Boolean); return im.length ? lims(im) : null; });
+  if (S.rgb && !bins.narrow) S.lim.rgb = bins.cols.map((_, k) => { const im = live.map(f => f.rgb?.[k]).filter(Boolean); return im.length ? lims(im) : null; });
 }
 
 const stretcher = lim => { const soft = 3 * lim.sig, hi = lim.lo + (lim.hi - lim.lo) * 10 ** -S.bright, d = Math.asinh(Math.max(hi - lim.lo, soft) / soft);
@@ -216,20 +246,42 @@ const stretcher = lim => { const soft = 3 * lim.sig, hi = lim.lo + (lim.hi - lim
 
 /** Paint a frame (or one exposure) into a size x size canvas. Row 0 is south, so rows are flipped. */
 function paint(cv, src) {
-  const size = S.size, plate = document.querySelector('meta[name="color-scheme"]').content === 'light';
+  const size = S.size, plate = S.introPlate ?? document.querySelector('meta[name="color-scheme"]').content === 'light';
   cv.width = cv.height = size;
   const ctx = cv.getContext('2d'), id = ctx.createImageData(size, size), d = id.data;
   if (!src || !S.lim) { ctx.clearRect(0, 0, size, size); return; }
   const st = stretcher(S.lim), nanv = plate ? 235 : 22;
-  const st3 = src.rgb && S.rgb ? S.lim.rgb.map(l => l && stretcher(l)) : null;
+  const colour = S.rgb && !S.diff && !S.introGrey, bins = S.bins || colourBins();
+  // a single exposure, or a narrow window, is tinted with its own colour; a wide window gives every dot its own colour
+  const tint = colour && (src.wave ? waveColor(src.wave) : bins.narrow ? bins.tint : null);
+  // one brightness scale for every colour bin, so a dot's colour is the real shape of its spectrum (flux per frequency)
+  const st6 = colour && !tint && src.rgb ? src.rgb.map(() => st) : null, cols = bins.cols;
   for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) {
     const p = r * size + c, o = ((size - 1 - r) * size + c) * 4;
     let R, G, B;
     if (src.diff && S.diff) { const t = 0.5 + src.diff[p] / (16 * S.lim.dsig * 10 ** -S.bright); R = G = B = t !== t ? NaN : Math.min(1, Math.max(0, t)); }
-    else if (st3) [R, G, B] = st3.map((f, k) => (f && src.rgb[k] ? f(src.rgb[k][p]) : 0));
-    else R = G = B = st(src.img[p]);
+    else if (st6) {
+      // brightness from all colours; hue from where the light is, so a dot bright only at long wavelengths turns magenta
+      let sum = 0, mx = 0, mn = Infinity, cr = 0, cg = 0, cb = 0, n = 0;
+      for (let k = 0; k < st6.length; k++) {
+        if (!st6[k] || !src.rgb[k]) continue;
+        const s = st6[k](src.rgb[k][p]);
+        if (s !== s) continue;
+        n++; sum += s; if (s > mx) mx = s; if (s < mn) mn = s;
+        cr += s * cols[k][0]; cg += s * cols[k][1]; cb += s * cols[k][2];
+      }
+      if (!n) R = G = B = st(src.img[p]);
+      else {
+        const I = Math.min(1, 0.55 * sum / n + 0.45 * mx), top = Math.max(cr, cg, cb) || 1;
+        const sat = Math.min(1, 1.25 * (mx - mn) / (mx + mn + 1e-6)) * smooth(mx, 0.18, 0.5);      // the faint sky stays grey
+        R = I * (1 - sat + sat * cr / top); G = I * (1 - sat + sat * cg / top); B = I * (1 - sat + sat * cb / top);
+      }
+    } else {
+      R = G = B = st(src.img[p]);
+      if (tint && R === R) { const v = R, a = 0.75 * smooth(v, 0.08, 0.45); R = v * (1 - a + a * tint[0]); G = v * (1 - a + a * tint[1]); B = v * (1 - a + a * tint[2]); }      // stars take the colour, the faint sky stays grey
+    }
     if (R !== R) { d[o] = d[o + 1] = d[o + 2] = nanv; d[o + 3] = 255; continue; }
-    if (plate) { R = 1 - R; G = 1 - G; B = 1 - B; }
+    if (plate) [R, G, B] = R === G && G === B ? [1 - R, 1 - G, 1 - B] : invertLightness(R, G, B);
     d[o] = 255 * R; d[o + 1] = 255 * G; d[o + 2] = 255 * B; d[o + 3] = 255;
   }
   ctx.putImageData(id, 0, 0);
@@ -262,7 +314,7 @@ function renderEye(target = $('#img'), over = $('#ovl')) {
   $('#hud-epoch').innerHTML = !ep ? '' : cur.one ? `<b>${fmtDate(cur.mjd)}</b>\n<i>one exposure · detector ${cur.src.det}</i>\n<i>${cur.src.wave.toFixed(3)} µm</i>`
     : S.merge && cur.src ? `<b>All dates</b>\n<i>${cur.src.count} exposures stacked</i>\n<i>${monthYear(cur.src.span[0])} – ${monthYear(cur.src.span[1])}</i>`
     : `<b>${fmtDate(cur.mjd)}</b>\n<i>${cur.src ? `${cur.src.count} exposures stacked` : 'no exposures in this colour range'}</i>\n<i>date ${S.frame + 1} of ${S.search.epochs.length}</i>`;
-  const mode = [S.diff && 'difference', S.rgb && 'colour: short = blue, long = red', S.follow && canFollow() && 'following the selected object'].filter(Boolean).join('\n');
+  const mode = [S.diff && 'difference', S.rgb && !S.diff && ((S.bins || colourBins()).narrow ? 'tinted with this colour' : 'white = every colour · magenta = longest only'), S.follow && canFollow() && 'following the selected object'].filter(Boolean).join('\n');
   $('#hud-wave').innerHTML = `${mode ? `<i>${mode}</i>\n` : ''}${S.wmin.toFixed(2)}–${S.wmax.toFixed(2)} µm`;
   $('#hud-scale').innerHTML = `${(S.size * K.PIX / 60 / S.zoom).toFixed(1)}′ across\n<i>north up · east left</i>`;
   if (target.id === 'img') renderBezel();
@@ -300,6 +352,7 @@ function halo(g, dpr, dash = []) {
 
 function drawOverlay(cv, W, cur) {
   cv.width = cv.height = W;
+  if (S.introOn) return;                       // the opening shows the bare plates
   const g = cv.getContext('2d'), dpr = W / (cv.clientWidth || W), cell = W / view().sw, size = S.size;
   g.lineWidth = 1.2 * dpr;
   const f = S.frames[S.frame];
@@ -342,6 +395,16 @@ function drawOverlay(cv, W, cur) {
     const dt = (cur.mjd - m.mjd0) / 365.25, [x, y] = toScreen(m.col - m.pe * dt / K.PIX - fx, m.row + m.pn * dt / K.PIX - fy, W);
     g.strokeStyle = m.known ? css('--known') : css('--found'); g.lineWidth = 2 * dpr; g.beginPath(); g.arc(x, y, 9 * dpr, 0, 7); g.stroke(); g.lineWidth = 1.2 * dpr;
   }
+  if (S.sel && (S.sel.pmra || S.sel.pmde) && !(S.follow && canFollow()) && S.search) {
+    // where it is on every date, joined in time order: its path across the sky, drawn in when it is selected
+    const pts = S.search.epochs.map((ep, i) => { const [c, r] = selGrid((ep.mjd0 + ep.mjd1) / 2); return [...toScreen(c, r, W), i]; });
+    const u = Math.min(1, (performance.now() - (S.sel.t0 || 0)) / 900), reach = u * (pts.length - 1);
+    g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length && i - 1 < reach; i++) { const f = Math.min(1, reach - (i - 1)); g.lineTo(pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * f, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * f); }
+    halo(g, dpr, [2 * dpr, 2 * dpr]);
+    for (const [x, y, i] of pts) if (i <= reach + 1e-6) { g.beginPath(); g.arc(x, y, (i === S.frame ? 3.2 : 2.2) * dpr, 0, 7); g.fillStyle = css('--bg'); g.fill(); g.beginPath(); g.arc(x, y, (i === S.frame ? 2.4 : 1.5) * dpr, 0, 7); g.fillStyle = epochColor(i); g.fill(); }
+    if (u < 1) requestAnimationFrame(() => renderEye());
+  }
   if (S.sel) {
     const [c, r] = selGrid(cur.mjd), [x, y] = toScreen(c - fx, r - fy, W);
     g.beginPath(); g.arc(x, y, 2.5 * cell, 0, 7); halo(g, dpr);
@@ -355,7 +418,7 @@ function buildPlates() {
   const box = $('#plates'); box.replaceChildren();
   S.search.epochs.forEach((ep, i) => {
     const b = document.createElement('button');
-    b.type = 'button'; b.className = 'plate'; b.role = 'option'; b.style.setProperty('--pc', epochColor(i));
+    b.type = 'button'; b.className = 'plate'; b.role = 'option'; b.style.setProperty('--pc', epochColor(i)); b.style.setProperty('--i', i);
     b.innerHTML = `<canvas></canvas><span>${esc(ep.label)}</span><small>${ep.n}</small>`;
     b.title = `${fmtDate(ep.mjd0)} to ${fmtDate(ep.mjd1)}: ${ep.n} exposures released`;
     b.onclick = () => { S.frame = i; setPlaying(false); renderAll(); syncUrl(); };
@@ -386,7 +449,7 @@ const xw = x => Math.exp(L0 + Math.min(1, Math.max(0, x)) * (L1 - L0));
 function buildStrip() {
   K.DET.forEach(([a, b], i) => {
     const s = document.createElement('button');
-    s.type = 'button'; s.className = 'seg'; s.style.cssText = `left:${wx(a) * 100}%;width:${(wx(b) - wx(a)) * 100}%;background:var(--d${i + 1})`;
+    s.type = 'button'; s.className = 'seg'; s.style.cssText = `left:${wx(a) * 100}%;width:${(wx(b) - wx(a)) * 100}%`;
     s.textContent = `D${i + 1}`;
     s.title = `Detector ${i + 1}: ${a.toFixed(2)} to ${b.toFixed(2)} µm`;
     s.onclick = () => setWindow(a, b);
@@ -425,10 +488,17 @@ function renderStrip() {
   const win = $('#win'), cv = $('#strip-ticks');
   win.style.left = `${wx(S.wmin) * 100}%`; win.style.width = `${(wx(S.wmax) - wx(S.wmin)) * 100}%`;
   $('#h0').setAttribute('aria-valuetext', `${S.wmin.toFixed(2)} micrometres`); $('#h1').setAttribute('aria-valuetext', `${S.wmax.toFixed(2)} micrometres`);
+  // the strip is the colour ramp itself: each wavelength in the colour the picture uses for it
+  $('#strip').style.background = `linear-gradient(to right, ${K.DET.map(([a, b], i) => `var(--d${i + 1}) ${(wx(Math.sqrt(a * b)) * 100).toFixed(1)}%`).join(', ')})`;
   const dpr = devicePixelRatio, W = cv.width = Math.round(cv.clientWidth * dpr); cv.height = 30 * dpr;
-  const g = cv.getContext('2d'), inN = S.exps.filter(inBand).length;
-  g.fillStyle = css('--ink');
-  for (const e of S.exps) { g.globalAlpha = inBand(e) ? 0.85 : 0.28; g.fillRect(Math.round(wx(e.wave) * (W - dpr)), 3 * dpr, dpr, 7 * dpr); }      // one tick per exposure: where data exists
+  const g = cv.getContext('2d'), inN = S.exps.filter(inBand).length, now = performance.now(), ink = css('--ink');
+  let young = false;
+  for (const e of S.exps) {          // one tick per exposure: where data exists. New arrivals flash in their own colour
+    const age = now - (e.t || 0), x = Math.round(wx(e.wave) * (W - dpr));
+    if (age < 1100) { young = true; const u = age / 1100, c = waveColor(e.wave); g.globalAlpha = 1; g.fillStyle = `rgb(${c.map(v => Math.round(255 * v)).join(',')})`; g.fillRect(x, 0, dpr, (3 + 7 * (1 - u)) * dpr + 7 * dpr * u); continue; }
+    g.fillStyle = ink; g.globalAlpha = inBand(e) ? 0.85 : 0.28; g.fillRect(x, 3 * dpr, dpr, 7 * dpr);
+  }
+  if (young && !S.tickAnim) S.tickAnim = requestAnimationFrame(() => { S.tickAnim = null; renderStrip(); });
   g.globalAlpha = 1; g.fillStyle = css('--faint'); g.font = `${9 * dpr}px "IBM Plex Mono", monospace`; g.textBaseline = 'top';
   for (const w of [0.75, 1, 1.5, 2, 2.5, 3, 4, 5]) { const x = Math.round(wx(w) * (W - dpr)); g.fillRect(x, 13 * dpr, dpr, 4 * dpr); g.textAlign = w === 0.75 ? 'left' : w === 5 ? 'right' : 'center'; g.fillText(w === 5 ? '5 µm' : String(w), x, 19 * dpr); }
   $('#strip-read').innerHTML = `<b>${S.wmin.toFixed(2)}–${S.wmax.toFixed(2)} µm</b>${S.exps.length ? ` · ${inN} of ${S.exps.length} exposures in this window` : ''}`;
@@ -499,7 +569,8 @@ function selectSky(ra, dec, mjd = S.frames[S.frame]?.mjd || K.REF_MJD, forced = 
     if (d < md) { md = d; match = o; }
   }
   if (match && match.src !== 'CatWISE') [ra, dec] = K.apparent(match, mjd);      // a catalogue position is better than a centre found by eye, above all for saturated stars
-  S.sel = { ra, dec, mjd0: mjd, pmra: match?.pmra || 0, pmde: match?.pmde || 0, plx: match?.plx > 0 ? match.plx : 0, match, measuredPm: false };
+  S.sel = { ra, dec, mjd0: mjd, pmra: match?.pmra || 0, pmde: match?.pmde || 0, plx: match?.plx > 0 ? match.plx : 0, match, measuredPm: false, t0: performance.now() };
+  S.animate = true;
   measure(); syncUrl();
   if (S.follow) { computeFrames(); renderAll(); } else renderEye();
 }
@@ -619,7 +690,9 @@ function drawSpectrum() {
   const pk = line.reduce((a, b) => (b[1] > a[1] ? b : a), [0, -Infinity]);
   S.peak = line.length ? { val: pk[1].toFixed(dp), unit, ab: K.abMag(pk[1] * u).toFixed(1), wave: pk[0].toFixed(2) } : null;
   const bbLine = S.bb && S.read ? [{ pts: Array.from({ length: 80 }, (_, i) => { const w = 0.75 + i * 4.25 / 79; return [w, S.read.model(w) / u]; }), color: css('--mute'), dash: '3 3', label: `${Math.round(S.read.T / 100) * 100} K blackbody` }] : [];
+  const animate = S.animate; S.animate = false;
   scatter($('#ch-spec'), {
+    animate,
     empty: 'Core saturated in every exposure: no spectrum',
     points: (line.length ? usable : []).map(m => ({ x: m.wave, y: m.flux / u, e: m.err / u, color: epochColor(m.e.epoch), hollow: m.flagged || m.sat, data: m,
       tip: `${m.wave.toFixed(3)} µm · ${fmtDate(m.e.mjd)}\n${(m.flux / u).toFixed(dp)} ± ${(m.err / u).toFixed(dp)} ${unit}${m.flux > 0 ? ` (AB ${K.abMag(m.flux).toFixed(2)})` : ''}${m.flagged ? '\nflagged pixel in aperture' : m.sat ? '\nnear saturation' : ''}` })),
@@ -756,6 +829,34 @@ async function scan() {             // measure the motion of every dot in the co
   buildField(); renderEye();
 }
 
+// ---------- the opening, once per visitor: 1930 on glass, then 2026 in colour ----------
+async function intro() {
+  const eye = $('#eye'), box = document.createElement('div'), wait = ms => new Promise(r => setTimeout(r, ms));
+  let skipped = false;
+  const skip = () => { skipped = true; };
+  box.className = 'intro plate-phase';
+  box.innerHTML = '<p class="i-year">1930</p><p class="i-line">Pluto was found by blinking two photographs on glass.</p><button class="i-skip" type="button">Skip</button>';
+  eye.append(box); eye.classList.add('intro-on');
+  box.onclick = skip; addEventListener('keydown', skip, { once: true });
+  const was = { zoom: S.zoom, vx: S.vx, vy: S.vy };
+  setPlaying(false); S.introOn = true; S.introPlate = true; S.introGrey = true; S.zoom = 1.6; S.vx = S.vy = S.size / 2;
+  const ends = [0, S.frames.length - 1];
+  for (let i = 0; i < 7 && !skipped; i++) { S.frame = ends[i % 2]; renderEye(); await wait(i ? 430 : 700); }      // the star jumps
+  if (!skipped) {
+    box.className = 'intro'; box.querySelector('.i-year').textContent = '2026';
+    box.querySelector('.i-line').textContent = 'NASA’s SPHEREx photographs the whole sky in 102 infrared colours.';
+    S.introPlate = undefined; S.introGrey = false; S.introOn = false; eye.classList.add('reveal');
+    Object.assign(S, was); renderAll();
+    await Promise.race([wait(2600), new Promise(r => { const t = setInterval(() => skipped && (clearInterval(t), r()), 50); })]);
+  }
+  S.introOn = false; S.introPlate = undefined; S.introGrey = false; Object.assign(S, was);
+  box.classList.add('out'); eye.classList.remove('intro-on');
+  setTimeout(() => { box.remove(); eye.classList.remove('reveal'); }, 500);
+  removeEventListener('keydown', skip);
+  try { localStorage.setItem('blink-intro', '1'); } catch {}
+  renderAll(); setPlaying(true);
+}
+
 // ---------- play ----------
 let playTimer = null;
 function setPlaying(on) {
@@ -780,7 +881,7 @@ function syncUrl() {
   if (S.size !== 64) p.set('fov', S.size);
   if (S.wmin > K.WMIN + 1e-3 || S.wmax < K.WMAX - 1e-3) { p.set('wmin', S.wmin.toFixed(3)); p.set('wmax', S.wmax.toFixed(3)); }
   if (!S.playing) p.set('epoch', S.frame + 1);
-  if (S.diff) p.set('mode', 'difference'); else if (S.rgb) p.set('mode', 'colour');
+  if (S.diff) p.set('mode', 'difference'); else if (!S.rgb) p.set('mode', 'grey');
   if (S.sel) p.set('sel', `${S.sel.ra.toFixed(5)},${S.sel.dec.toFixed(5)}`);
   if (params.has('embed')) p.set('embed', 1);
   if (API) p.set('api', API);
@@ -941,8 +1042,10 @@ async function start() {
   if (params.get('fov')) { S.size = Math.min(160, Math.max(24, +params.get('fov') || 64)); $('#t-fov').value = S.size; }
   if (params.get('wmin')) { S.wmin = Math.max(K.WMIN, +params.get('wmin')); S.wmax = Math.min(K.WMAX, +params.get('wmax') || K.WMAX); }
   if (params.get('mode') === 'difference') { S.diff = true; $('#t-diff').setAttribute('aria-pressed', true); }
-  if (params.get('mode') === 'colour') { S.rgb = true; $('#t-rgb').setAttribute('aria-pressed', true); }
+  S.rgb = !['grey', 'difference'].includes(params.get('mode')); $('#t-rgb').setAttribute('aria-pressed', S.rgb);
   if (params.get('epoch')) { S.frame = Math.max(0, +params.get('epoch') - 1); S.playing = false; }
+  try { S.introPending = !location.search && !localStorage.getItem('blink-intro') && !matchMedia('(prefers-reduced-motion: reduce)').matches; } catch {}
+  if (params.has('intro')) S.introPending = true;
   setPlaying(S.playing);
   const q = params.get('target') || (params.get('ra') ? `${params.get('ra')} ${params.get('dec')}` : PRESETS[0]);     // it never opens empty
   go(q, { keepView: params.has('epoch') });
