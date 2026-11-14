@@ -9,6 +9,17 @@ const probe = document.body.appendChild(Object.assign(document.createElement('i'
 const css = v => { probe.style.color = `var(${v})`; return getComputedStyle(probe).color; };      // resolved for the current theme
 const API = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? new URLSearchParams(location.search).get('api') || '' : '';   // dev only
 const PRESETS = ["Barnard's Star", 'eps Indi B', 'WISE 0855-0714', 'RW Aur', 'R Dra'];
+const STORY = {
+  "Barnard's Star": ['Red dwarf', 'The fastest-moving star in our sky, and one of the Sun’s nearest neighbours. Watch it step north between SPHEREx’s passes.', 'var(--d3)'],
+  'eps Indi B': ['Pair of brown dwarfs', 'Two brown dwarfs circling each other, far out from their star. Too small to shine by fusion, they glow with heat left over from their birth.', 'var(--d4)'],
+  'WISE 0855-0714': ['Coldest brown dwarf known', 'Found in 2014 in images from NASA’s WISE, it is about as cold as an ordinary day on Earth. Invisible in visible light: slide the colour bar to the long end and it appears.', 'var(--d6)'],
+  'RW Aur': ['Young star', 'A star still wrapped in the disc of gas and dust it formed from. When material from that disc passes in front of it, it dims.', 'var(--d2)'],
+  'R Dra': ['Pulsating red giant', 'A dying star that swells and shrinks about every eight months, brightening and fading as it goes.', 'var(--d5)'],
+};
+const OTYPE = { '*': 'Star', 'BD*': 'Brown dwarf', 'BY*': 'Spotted variable star', 'Mi*': 'Pulsating red giant', 'TT*': 'Young star', 'Y*O': 'Young star', 'Or*': 'Young variable star',
+  'PM*': 'Fast-moving star', 'HPM*': 'Fast-moving star', 'WD*': 'White dwarf', 'G': 'Galaxy', 'QSO': 'Quasar', 'V*': 'Variable star', 'EB*': 'Eclipsing binary', 'RG*': 'Red giant',
+  'C*': 'Carbon star', 'LP*': 'Long-period variable', 'Ce*': 'Cepheid', 'RR*': 'RR Lyrae star', 'HII': 'Star-forming cloud', 'GlC': 'Globular cluster', 'OpC': 'Open cluster',
+  'PN': 'Planetary nebula', 'Em*': 'Emission-line star', 'LM*': 'Low-mass star', 'SB*': 'Double star', '**': 'Double star', 'AGB*': 'Giant star', 'Ae*': 'Young hot star' };
 const PRESET_NOTE = { "Barnard's Star": 'fastest-moving star', 'eps Indi B': 'brown dwarf pair', 'WISE 0855-0714': 'coldest brown dwarf known', 'RW Aur': 'young star that dims', 'R Dra': 'pulsing red giant' };
 const PRESET_QUERY = { "Barnard's Star": "Barnard's star", 'eps Indi B': 'eps Ind B', 'WISE 0855-0714': 'WISE J085510.83-071442.5' };
 const MOLECULES = [{ x0: 1.33, x1: 1.5, label: 'H₂O' }, { x0: 1.75, x1: 2.05, label: 'H₂O' }, { x0: 3.2, x1: 3.65, label: 'CH₄' },
@@ -32,12 +43,44 @@ const epochColor = i => {          // time runs from pale to saturated blue
   return `rgb(${a.map((v, k) => Math.round(v + (b[k] - v) * u)).join(',')})`;
 };
 const detColor = d => css(`--d${d}`);
+/** The theme's own ramp colour for a wavelength, for drawing on the page. */
+function rampCss(w) {
+  if (S.rampCss?.theme !== document.querySelector('meta[name="color-scheme"]').content) S.rampCss = { theme: document.querySelector('meta[name="color-scheme"]').content, c: [1, 2, 3, 4, 5, 6].map(d => rgb(detColor(d))) };
+  const x = Math.log(w), at = K.DET.map(([a, b]) => Math.log(Math.sqrt(a * b))), C = S.rampCss.c;
+  let i = 0;
+  if (x <= at[0]) i = 0; else if (x >= at[5]) i = 4; else while (x > at[i + 1]) i++;
+  const u = Math.min(1, Math.max(0, (x - at[i]) / (at[i + 1] - at[i])));
+  return `rgb(${C[i].map((v, k) => Math.round(v + (C[i + 1][k] - v) * u)).join(',')})`;
+}
 const fmtDate = mjd => K.mjdDate(mjd).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 const monthYear = mjd => K.mjdDate(mjd).toLocaleDateString('en-GB', { month: 'short', year: '2-digit', timeZone: 'UTC' });
 const totalPm = o => Math.hypot(o.pmra || 0, o.pmde || 0) / 1000;      // arcsec per year
 const round5 = v => Math.round(v * 1e5) / 1e5;
 function notice(html, err = false) { const n = $('#notice'); n.hidden = !html; n.className = 'notice' + (err ? ' err' : ''); n.innerHTML = html || ''; }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---------- the story card: who this is, in human terms ----------
+function renderStory() {
+  const t = S.target;
+  if (!t) return;
+  const o = t.obj, st = STORY[t.name], year = new Date().getUTCFullYear(), facts = [];
+  $('#st-name').textContent = t.name || 'A patch of sky';
+  const ly = o?.plx > 0.3 ? 3261.56 / o.plx : null;
+  $('#st-kicker').textContent = [st?.[0] || OTYPE[o?.type] || (o ? 'Catalogued object' : 'Your coordinates'), ly && `${ly < 10 ? ly.toFixed(1) : ly < 1000 ? Math.round(ly) : Math.round(ly / 100) * 100} light-years away`].filter(Boolean).join(' · ');
+  $('#st-line').textContent = st?.[1] || (o ? `${K.sexa(t.ra, t.dec)}. Every exposure SPHEREx has released of it, lined up and stacked by date. Click any dot to measure it.`
+    : `${K.sexa(t.ra, t.dec)}. Every exposure SPHEREx has released of this spot, lined up and stacked by date. Click any dot to measure it.`);
+  if (ly) {
+    const left = year - ly;
+    facts.push(['The light you see left it', left > 0 ? `in ${Math.round(left)}` : `around ${Math.round(-left / 100) * 100 || ''} BC`, ly < 30 ? `${ly.toFixed(1)} years ago, at the speed of light` : 'and has been travelling ever since']);
+  }
+  const pm = o ? totalPm(o) : 0;
+  if (pm > 0.2) {
+    const arcmin = pm * (year - 1930) / 60;
+    facts.push(['Since Pluto was found, it has moved', `${arcmin.toFixed(0)}′`, `${Math.round(100 * arcmin / 31)} % of the full Moon’s width, across the sky`]);
+  }
+  if (S.search) facts.push(['SPHEREx has photographed it', `${S.search.n} times`, `in ${S.search.epochs.length} sky passes, in 102 colours`]);
+  $('#st-facts').innerHTML = facts.slice(0, 3).map(([k, v, s]) => `<div><dt>${k}</dt><dd>${v}<small>${esc(s)}</small></dd></div>`).join('');
+}
 
 // ---------- choosing a target ----------
 async function go(text, { keepView = false } = {}) {
@@ -60,7 +103,7 @@ async function go(text, { keepView = false } = {}) {
   } catch (e) {
     return notice(`The name lookup did not answer (${esc(e.message)}). Coordinates still work.`, true);
   }
-  loadTarget(t, keepView);
+  return loadTarget(t, keepView);
 }
 
 async function loadTarget(t, keepView) {
@@ -68,6 +111,7 @@ async function loadTarget(t, keepView) {
   Object.assign(S, { target: t, c: { ra: t.ra, dec: t.dec, size: S.size }, search: null, byKey: new Map(), exps: [], failed: 0, total: 0,
     frames: [], frame: keepView ? S.frame : 0, scanned: false, sel: null, meas: [], peek: null, catalog: [], movers: [], lim: null, zoom: 1, vx: S.size / 2, vy: S.size / 2, cached: null });
   $('#q').value = t.name || `${t.ra} ${t.dec}`;
+  S.slewPending = true; renderStory();
   for (const b of $('#presets').querySelectorAll('button')) b.setAttribute('aria-current', b.dataset.name === t.name);
   $('#load').textContent = 'Finding exposures…';
   $('#b-more').hidden = true; $('#field').replaceChildren(); $('#field-note').textContent = '';
@@ -92,7 +136,7 @@ async function loadTarget(t, keepView) {
   S.search = search;
   for (const e of search.exposures) S.byKey.set(e.key, e);
   if (!search.n) { $('#load').textContent = ''; return notice('SPHEREx has no released images at this position yet. New data arrives weekly.'); }
-  buildPlates();
+  buildPlates(); renderStory();
   loadCatalogues(gen);
   await fetchChunks(chunks, gen);
   if (gen !== S.gen) return;
@@ -306,6 +350,11 @@ function renderEye(target = $('#img'), over = $('#ovl')) {
   paint(off, cur.src);
   target.width = target.height = W;
   const ctx = target.getContext('2d'), v = view();
+  if (target.id === 'img' && cur.src && !S.introOn) {
+    const amb = $('#ambient'); amb.width = amb.height = S.size;
+    amb.getContext('2d').drawImage(off, 0, 0);              // the whole field, unzoomed: the page glows with the sky it shows
+    if (S.slewPending) { S.slewPending = false; const eye = $('#eye'); eye.classList.remove('slew'); void eye.offsetWidth; eye.classList.add('slew'); }
+  }
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(off, v.sx, v.sy, v.sw, v.sw, 0, 0, W, W);
   drawOverlay(over, W, cur);
@@ -394,6 +443,16 @@ function drawOverlay(cv, W, cur) {
   for (const m of S.movers) {                  // found by the scan
     const dt = (cur.mjd - m.mjd0) / 365.25, [x, y] = toScreen(m.col - m.pe * dt / K.PIX - fx, m.row + m.pn * dt / K.PIX - fy, W);
     g.strokeStyle = m.known ? css('--known') : css('--found'); g.lineWidth = 2 * dpr; g.beginPath(); g.arc(x, y, 9 * dpr, 0, 7); g.stroke(); g.lineWidth = 1.2 * dpr;
+  }
+  if (S.hover && !S.introOn) {
+    const [x, y] = toScreen(S.hover.col, S.hover.row, W);
+    g.save(); g.globalAlpha = 0.85; g.beginPath(); g.arc(x, y, Math.max(10 * dpr, 2.3 * cell), 0, 7); halo(g, dpr, [3 * dpr, 4 * dpr]); g.restore();
+    if (S.hover.label) {
+      g.font = `500 ${12 * dpr}px "IBM Plex Sans", sans-serif`;
+      const tw = g.measureText(S.hover.label).width, bx = Math.min(x + 14 * dpr, W - tw - 22 * dpr), by = Math.max(y - 34 * dpr, 6 * dpr);
+      g.fillStyle = 'rgba(10,10,12,.82)'; g.beginPath(); g.roundRect(bx, by, tw + 16 * dpr, 22 * dpr, 11 * dpr); g.fill();
+      g.fillStyle = '#F1EDE6'; g.textBaseline = 'middle'; g.fillText(S.hover.label, bx + 8 * dpr, by + 11 * dpr);
+    }
   }
   if (S.sel && (S.sel.pmra || S.sel.pmde) && !(S.follow && canFollow()) && S.search) {
     // where it is on every date, joined in time order: its path across the sky, drawn in when it is selected
@@ -501,7 +560,7 @@ function renderStrip() {
   if (young && !S.tickAnim) S.tickAnim = requestAnimationFrame(() => { S.tickAnim = null; renderStrip(); });
   g.globalAlpha = 1; g.fillStyle = css('--faint'); g.font = `${9 * dpr}px "IBM Plex Mono", monospace`; g.textBaseline = 'top';
   for (const w of [0.75, 1, 1.5, 2, 2.5, 3, 4, 5]) { const x = Math.round(wx(w) * (W - dpr)); g.fillRect(x, 13 * dpr, dpr, 4 * dpr); g.textAlign = w === 0.75 ? 'left' : w === 5 ? 'right' : 'center'; g.fillText(w === 5 ? '5 µm' : String(w), x, 19 * dpr); }
-  $('#strip-read').innerHTML = `<b>${S.wmin.toFixed(2)}–${S.wmax.toFixed(2)} µm</b>${S.exps.length ? ` · ${inN} of ${S.exps.length} exposures in this window` : ''}`;
+  $('#strip-read').innerHTML = `<b>${S.wmin.toFixed(2)}–${S.wmax.toFixed(2)} µm</b>${S.exps.length ? ` · ${inN} of ${S.exps.length} exposures` : ''}`;
 }
 function stopSweep() { if (S.sweep) { cancelAnimationFrame(S.sweep); S.sweep = null; $('#b-sweep').setAttribute('aria-pressed', false); } }
 function sweep() {                 // slide a narrow window from 0.75 to 5.0 um
@@ -694,7 +753,8 @@ function drawSpectrum() {
   scatter($('#ch-spec'), {
     animate,
     empty: 'Core saturated in every exposure: no spectrum',
-    points: (line.length ? usable : []).map(m => ({ x: m.wave, y: m.flux / u, e: m.err / u, color: epochColor(m.e.epoch), hollow: m.flagged || m.sat, data: m,
+    area: { pts: line, stops: K.DET.map(([a, b], i) => [Math.sqrt(a * b), detColor(i + 1)]), opacity: 0.5 },
+    points: (line.length ? usable : []).map(m => ({ x: m.wave, y: m.flux / u, e: m.err / u, color: rampCss(m.wave), hollow: m.flagged || m.sat, data: m,
       tip: `${m.wave.toFixed(3)} µm · ${fmtDate(m.e.mjd)}\n${(m.flux / u).toFixed(dp)} ± ${(m.err / u).toFixed(dp)} ${unit}${m.flux > 0 ? ` (AB ${K.abMag(m.flux).toFixed(2)})` : ''}${m.flagged ? '\nflagged pixel in aperture' : m.sat ? '\nnear saturation' : ''}` })),
     lines: [...bbLine, { pts: line, color: css('--sel'), width: 1.5 }],
     bands: K.DET.map(([x0, x1], i) => ({ x0, x1, color: detColor(i + 1) })),
@@ -827,6 +887,48 @@ async function scan() {             // measure the motion of every dot in the co
     `${S.movers.length} move${S.movers.length === 1 ? 's' : ''}` + (S.movers.length ? `; ${fresh} ${fresh === 1 ? 'is' : 'are'} not in a catalogue.` : '.') +
     (S.movers.length ? ' A star beside a bright mover can be dragged along by its glow: compare with the catalogue value, and check with the flags overlay.' : '');
   buildField(); renderEye();
+}
+
+// ---------- the guided tour: five stops, about forty seconds ----------
+const TOUR = [
+  { target: "Barnard's Star", text: 'Barnard’s Star is six light-years away and the fastest-moving star in our sky. Watch it step north between SPHEREx’s passes.', ms: 7500,
+    run: () => { setWindow(K.WMIN, K.WMAX); S.zoom = 2; renderAll(); setPlaying(true); } },
+  { target: 'WISE 0855-0714', text: 'WISE 0855 is the coldest brown dwarf known, too cold to see in visible light. Sweep into the infrared and it appears at the centre.', ms: 10500,
+    run: () => { S.zoom = 1.6; setPlaying(true); sweep(); } },
+  { target: 'eps Indi B', text: 'Click any dot for its spectrum, measured in every exposure. This one dips where methane absorbs: the mark of a cold brown dwarf.', ms: 8500,
+    run: () => { setWindow(K.WMIN, K.WMAX); selectTarget(); setTab('lc'); } },
+  { target: 'R Dra', text: 'Stars change. This red giant brightens and fades every eight months, and SPHEREx has already caught two full cycles.', ms: 8500,
+    run: () => { selectTarget(); setTab('lc'); } },
+  { target: null, text: 'Now it’s yours. Search any star, or click a dot to measure it.', ms: 0 },
+];
+function selectTarget() { const o = S.catalog.find(x => x.target), f = S.frames[S.frame]; if (o && f) selectSky(...K.apparent(o, f.mjd), f.mjd, o); }
+function setTab(tab) { S.tab = tab; $('#s-lc').setAttribute('aria-selected', tab === 'lc'); $('#s-pm').setAttribute('aria-selected', tab === 'pm'); drawTimeChart(); }
+let touring = null;
+async function tour() {
+  if (touring) return touring.stop();
+  const cap = $('#caption'), btn = $('#b-tour'), wait = ms => new Promise(r => setTimeout(r, ms));
+  let stop = false, next = null;
+  touring = { stop: () => { stop = true; next?.(); } };
+  btn.setAttribute('aria-pressed', true); btn.textContent = 'End tour';
+  for (let i = 0; i < TOUR.length && !stop; i++) {
+    const s = TOUR[i];
+    cap.hidden = false;
+    cap.innerHTML = `<p class="step">${i + 1} of ${TOUR.length}</p><p>${s.text}</p><div class="dots">${TOUR.map((_, k) => `<i class="${k <= i ? 'on' : ''}"></i>`).join('')}</div>` +
+      `<div class="ctl">${i < TOUR.length - 1 ? '<button type="button" data-a="next">Next</button>' : ''}<button type="button" data-a="end">${i < TOUR.length - 1 ? 'Skip tour' : 'Close'}</button></div>`;
+    cap.querySelector('[data-a=end]').onclick = () => touring.stop();
+    const nb = cap.querySelector('[data-a=next]');
+    if (s.target && S.target?.name !== s.target) {
+      await go(s.target);
+      for (let k = 0; k < 60 && !(S.frames.length && S.frames.every(Boolean)); k++) await wait(100);
+    }
+    if (stop) break;
+    s.run?.();
+    if (!s.ms) { await new Promise(r => { next = r; }); break; }
+    await Promise.race([wait(s.ms), new Promise(r => { next = r; if (nb) nb.onclick = () => r(); })]);
+    stopSweep();
+  }
+  cap.hidden = true; touring = null; next = null;
+  btn.setAttribute('aria-pressed', false); btn.textContent = 'Take the tour';
 }
 
 // ---------- the opening, once per visitor: 1930 on glass, then 2026 in colour ----------
@@ -968,7 +1070,7 @@ const keys = {};
 function init() {
   if (params.has('embed')) document.body.classList.add('embed');
   buildStrip();
-  for (const name of PRESETS) { const b = document.createElement('button'); b.type = 'button'; b.innerHTML = `${esc(name)}<small>${PRESET_NOTE[name]}</small>`; b.dataset.name = name; b.onclick = () => go(name); $('#presets').append(b); }
+  for (const name of PRESETS) { const b = document.createElement('button'); b.type = 'button'; b.innerHTML = `<i style="--c:${STORY[name][2]}"></i><b>${esc(name)}</b><small>${PRESET_NOTE[name]}</small>`; b.dataset.name = name; b.onclick = () => go(name); $('#presets').append(b); }
   $('#search').onsubmit = ev => { ev.preventDefault(); go($('#q').value); };
   const restack = () => { computeFrames(); renderAll(); syncUrl(); };
   keys.d = toggle('#t-diff', 'diff', () => { if (S.diff && S.rgb) { S.rgb = false; $('#t-rgb').setAttribute('aria-pressed', false); } restack(); });
@@ -980,7 +1082,7 @@ function init() {
   keys.a = toggle('#t-all', 'merge', () => { if (S.merge) setPlaying(false); restack(); });
   keys.f = toggle('#t-flags', 'flags', renderEye);
   keys.g = toggle('#t-cat', 'cats', renderEye);
-  toggle('#t-snap', 'snap');
+      // clicks always snap to the nearest star (S.snap); the toggle was removed to keep the dock short
   keys.s = sweep; $('#b-sweep').onclick = sweep;
   keys['0'] = () => { stopSweep(); setWindow(K.WMIN, K.WMAX); }; $('#b-all').onclick = keys['0'];
   K.DET.forEach(([a, b], i) => { keys[i + 1] = () => { stopSweep(); setWindow(a, b); }; });
@@ -1009,6 +1111,7 @@ function init() {
   $('#b-link').onclick = async () => { syncUrl(); try { await navigator.clipboard.writeText(location.href); $('#b-link').textContent = 'Copied'; } catch { $('#b-link').textContent = 'Copy from address bar'; } setTimeout(() => ($('#b-link').textContent = 'Copy link'), 1600); };
   $('#b-more').onclick = async () => { $('#b-more').hidden = true; const have = new Set(S.exps.map(e => e.key)); await fetchChunks(K.planChunks(S.search.exposures, 1e9, have).map(keys => ({ keys })), S.gen); };
   $('#b-scan').onclick = scan;
+  $('#b-tour').onclick = tour;
   const drawer = (btn, box, open) => { $(btn).onclick = () => { const on = $(box).hidden; $(box).hidden = !on; $(btn).setAttribute('aria-expanded', on); if (on) open(); }; };
   drawer('#b-film', '#film', renderFilm); drawer('#b-wide', '#wide', wider);
   $('#c-log').onclick = () => { S.log = !S.log; $('#c-log').setAttribute('aria-pressed', S.log); drawSpectrum(); };
@@ -1020,8 +1123,31 @@ function init() {
   const eye = $('#eye');
   let down = null;
   eye.onpointerdown = ev => { down = { x: ev.clientX, y: ev.clientY, vx: S.vx, vy: S.vy, moved: false }; eye.setPointerCapture(ev.pointerId); };
+  let hoverRaf = 0;
+  eye.onpointerleave = () => { if (S.hover) { S.hover = null; renderEye(); } };
   eye.onpointermove = ev => {
-    if (!down) return;
+    if (!down) {                     // no button: find what is under the pointer, and invite a click
+      if (hoverRaf || !S.frames[S.frame] || S.introOn) return;
+      hoverRaf = requestAnimationFrame(() => {
+        hoverRaf = 0;
+        const r = eye.getBoundingClientRect(), [col, row] = toGridXY(ev.clientX - r.left, ev.clientY - r.top, r.width), mjd = S.frames[S.frame].mjd, [fx, fy] = followShift(mjd);
+        let best = null, bd = 2.2;
+        for (const o of S.catalog) {
+          if (o.src === 'Gaia DR3' && !(o.mag < 17) || o.src === 'CatWISE') continue;
+          const [c, rr] = K.toGrid(...K.apparent(o, mjd), S.c), d = Math.hypot(c - fx - col, rr - fy - row) - (o.src === 'SIMBAD' || o.target ? 0.4 : 0);
+          if (d < bd) { bd = d; best = { col: c - fx, row: rr - fy, label: o.name } }
+        }
+        if (!best) {                 // otherwise the brightest pixel close by, if it stands well above the sky
+          const f = S.frames[S.frame]; let v = -Infinity;
+          for (let rr = Math.round(row) - 1; rr <= Math.round(row) + 1; rr++) for (let c = Math.round(col) - 1; c <= Math.round(col) + 1; c++) {
+            const x = f.img[rr * S.size + c]; if (x > v) { v = x; best = { col: c, row: rr, label: '' }; } }
+          if (!(v > S.lim.lo + 2 * 8 * S.lim.sig)) best = null;
+        }
+        const same = best && S.hover && best.col === S.hover.col && best.row === S.hover.row;
+        if (!same) { S.hover = best; renderEye(); }
+      });
+      return;
+    }
     const dx = ev.clientX - down.x, dy = ev.clientY - down.y;
     if (Math.hypot(dx, dy) > 4) down.moved = true;
     if (down.moved && S.zoom > 1) { const k = view().sw / eye.clientWidth; S.vx = down.vx - dx * k; S.vy = down.vy - dy * k; renderEye(); }

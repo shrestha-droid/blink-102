@@ -27,6 +27,7 @@ SPHEREx photographs the sky in 102 infrared colours, and Blink 102 shows them: e
 
 | You want to… | Do this |
 |---|---|
+| Get the short version | **Take the tour**: five stops, about forty seconds, with a caption on each |
 | Look somewhere | Type a name (`Barnard's star`) or coordinates (`08 55 10.83 -07 14 42.5` or `133.79 -7.24`) and press Go |
 | Step through dates | `←` `→`, or click a small picture. `Space` plays and pauses |
 | Change colour | Drag the window on the colour bar, click a detector (D1–D6), or press `S` to sweep |

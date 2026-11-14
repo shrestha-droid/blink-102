@@ -49,10 +49,24 @@ export function scatter(svg, o) {
   let yd = o.ydom || ext(p => p.y, 0.08);
   if (o.ylog) { const v = pts.map(p => p.y); yd = [Math.min(...v) / 1.4, Math.max(...v) * 1.4]; }
   else if (o.yzero && yd[0] > 0) yd[0] = 0;
+  let area = null;
   const X = x => m.l + (x - xd[0]) / (xd[1] - xd[0]) * (W - m.l - m.r);
   const Y = o.ylog ? y => H - m.b - (Math.log(y) - Math.log(yd[0])) / (Math.log(yd[1]) - Math.log(yd[0])) * (H - m.t - m.b)
     : y => H - m.b - (y - yd[0]) / (yd[1] - yd[0]) * (H - m.t - m.b);
 
+  if (o.area && o.area.pts.length > 1) {
+    const id = `ramp${Math.random().toString(36).slice(2, 8)}`, gr = el('linearGradient', { id, gradientUnits: 'userSpaceOnUse', x1: X(xd[0]), x2: X(xd[1]), y1: 0, y2: 0 });
+    for (const [x, c] of o.area.stops) gr.append(el('stop', { offset: ((x - xd[0]) / (xd[1] - xd[0])).toFixed(4), 'stop-color': c }));
+    const fade = el('linearGradient', { id: id + 'f', x1: 0, x2: 0, y1: 0, y2: 1 });
+    fade.append(el('stop', { offset: 0, 'stop-color': '#fff', 'stop-opacity': 1 }), el('stop', { offset: 1, 'stop-color': '#fff', 'stop-opacity': 0.15 }));
+    const mask = el('mask', { id: id + 'm' }); mask.append(el('rect', { x: 0, y: 0, width: W, height: H, fill: `url(#${id}f)` }));
+    svg.append(gr, fade, mask);
+    const base = o.ylog ? H - m.b : Y(Math.max(yd[0], 0)), ps = o.area.pts.filter(q => isFinite(q[1]) && (!o.ylog || q[1] > 0));
+    if (ps.length > 1) {
+      const d = `M${X(ps[0][0]).toFixed(1)} ${base}` + ps.map(q => `L${X(q[0]).toFixed(1)} ${Math.min(base, Y(q[1])).toFixed(1)}`).join('') + `L${X(ps[ps.length - 1][0]).toFixed(1)} ${base}Z`;
+      area = el('path', { d, fill: `url(#${id})`, mask: `url(#${id}m)`, opacity: o.area.opacity ?? 0.45 });
+    }
+  }
   for (const b of o.bands || []) {
     const x0 = Math.max(X(b.x0), m.l), x1 = Math.min(X(b.x1), W - m.r);
     if (x1 > x0) svg.append(el('rect', { x: x0, y: m.t, width: x1 - x0, height: H - m.t - m.b, fill: b.color, opacity: 0.09 }));
@@ -75,6 +89,7 @@ export function scatter(svg, o) {
     svg.append(el('text', { x: (x0 + x1) / 2, y: m.t - 9, 'text-anchor': 'middle', class: 'ch-tick' }, k.label));
   }
   const g = el('g'), lines = el('g');
+  if (area) g.append(area);
   if (o.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
     const id = `wipe${Math.random().toString(36).slice(2, 8)}`, cp = el('clipPath', { id }), r = el('rect', { x: 0, y: 0, width: 0, height: H });
     r.append(el('animate', { attributeName: 'width', from: 0, to: W, dur: '1.1s', fill: 'freeze', calcMode: 'spline', keyTimes: '0;1', keySplines: '.25 .7 .2 1' }));
