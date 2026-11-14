@@ -38,15 +38,16 @@ Measured with `node scripts/validate.mjs`, which uses the same routines as the p
 
 | Target | What Blink 102 shows | Measured | Catalogue |
 |---|---|---|---|
-| **Barnard's Star** | Steps north between the three passes (Sep 2025, Apr 2026, Sep 2026) | 10.26 ± 0.50″/yr | 10.39″/yr |
-| **eps Indi B** | Drifts across four passes | 4.50 ± 0.06″/yr | 4.68″/yr |
-| **WISE 0855−0714** | Invisible at short wavelengths; a dot at 3.8–5.0 µm that follows the predicted track | 450–550 µJy (AB ≈ 17.1), signal-to-noise 9–17 per date, within 4″ of the predicted position on every date | W2 = 13.9 mag (≈ 480 µJy) |
-| **RW Aur** | Brightness changes between passes, differently at different wavelengths | 0.12 mag change in its outer light (all colours); larger at 3.8–5.0 µm | irregular variable |
+| **Barnard's Star** | Steps north between the three passes (Sep 2025, Apr 2026, Sep 2026) | 10.29 ± 0.50″/yr toward 352° | 10.39″/yr toward 356° |
+| **eps Indi B** | Drifts across four passes; its spectrum shows the J, H and K peaks, methane absorption and a 4.1 µm peak of 59 mJy | 4.49 ± 0.06″/yr toward 126° | 4.68″/yr toward 122° |
+| **WISE 0855−0714** | Invisible at short wavelengths; a dot at 3.8–5.0 µm that follows the predicted track | 450–550 µJy (AB ≈ 17.1), signal-to-noise 9–17 per date, within 4″ of the predicted position on every date; motion from the three stacked dates 5.7 ± 1.1″/yr toward 270° | W2 = 13.9 mag (≈ 480 µJy); 8.15″/yr toward 275° |
+| **RW Aur** | Brightness changes between passes, differently at different wavelengths | 0.69 mag change at 3.8–5.0 µm, 0.12 mag over all colours (from its outer light) | irregular variable |
 | **R Dra** | Brightness swings over 17 monthly dates | 1.7 mag range (faintest Sep–Oct 2025 and Jun 2026, about 245 days apart) | Mira variable, period ≈ 246 days |
 
 Honest limits:
 
 - **Barnard's Star, RW Aur and R Dra are too bright for SPHEREx.** Their cores are saturated (blank or flagged) in most exposures. Blink 102 says so with a badge, locates them from their unsaturated outer light, and measures their brightness changes from that outer light. Their absolute spectra are not reliable.
+- **WISE 0855's motion** comes from only three stacked dates, one of them shallow (11 exposures), so it is uncertain: the direction is right and the speed is 2σ low.
 - **eps Indi B** is measured 4 % below the catalogue motion. It is a close pair of brown dwarfs orbiting each other, and parallax is not removed.
 - **The challenge's coordinates for WISE 0855 are its position around 2010.** It has since moved about 2′. Blink 102 recentres on where an object is now, and offers to recentre when you type old coordinates.
 - **WISE 0855 at short wavelengths:** a faint background star sits a few arcseconds from its current position, so light measured there below 2.4 µm is not the brown dwarf. The motion readout warns when measured and catalogue motions disagree.
