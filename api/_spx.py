@@ -340,7 +340,7 @@ def earth_xyz(mjd):
 # ---------- catalogues through IRSA TAP (no CORS there, so we proxy) ----------
 
 CATALOGS = {
-    "catwise": ("catwise_2020", "source_name AS name, ra, dec, pmra*1000 AS pmra, pmdec*1000 AS pmdec, w1mpro_pm AS m1, w2mpro_pm AS m2, meanobsmjd AS epoch"),
+    "catwise": ("catwise_2020", "source_name AS name, ra, dec, pmra*1000 AS pmra, pmdec*1000 AS pmdec, sigpmra*1000 AS epmra, sigpmdec*1000 AS epmdec, w1mpro_pm AS m1, w2mpro_pm AS m2, meanobsmjd AS epoch"),
     "gaia": ("gaia_dr3_source", "designation AS name, ra, dec, pmra, pmdec, parallax AS plx, phot_g_mean_mag AS m1, phot_rp_mean_mag AS m2"),
 }
 

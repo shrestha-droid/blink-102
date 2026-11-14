@@ -65,5 +65,5 @@ export const catwise = (ra, dec, rArcmin) => proxy('catwise', ra, dec, rArcmin, 
 async function proxy(kind, ra, dec, rArcmin, epoch, src) {
   const rows = JSON.parse(await get(`${API}/api/catalog?kind=${kind}&ra=${ra.toFixed(5)}&dec=${dec.toFixed(5)}&r=${rArcmin.toFixed(2)}`, 60000));
   return rows.map(o => ({ name: o.name, ra: o.ra, dec: o.dec, pmra: o.pmra || 0, pmde: o.pmdec || 0, plx: o.plx || 0,
-    mag: kind === 'catwise' ? o.m2 : o.m1, epoch: epoch ?? o.epoch, src }));
+    mag: kind === 'catwise' ? o.m2 : o.m1, epm: Math.hypot(o.epmra || 0, o.epmdec || 0), epoch: epoch ?? o.epoch, src }));
 }

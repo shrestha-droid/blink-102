@@ -39,7 +39,7 @@ export function scatter(svg, o) {
   svg.setAttribute('role', 'img');
   svg.setAttribute('aria-label', o.summary || '');
   svg.replaceChildren();
-  const pts = o.points.filter(p => isFinite(p.x) && isFinite(p.y) && (!o.ylog || p.y > 0));
+  const pts = o.points.filter(p => isFinite(p.x) && isFinite(p.y) && (!o.ylog || p.y > 0) && (!o.ydom || o.ylog || (p.y >= o.ydom[0] && p.y <= o.ydom[1])));
   if (!pts.length) {
     svg.append(el('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', class: 'ch-empty' }, o.empty || 'No measurements'));
     return;

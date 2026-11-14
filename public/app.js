@@ -127,7 +127,7 @@ async function fetchChunks(chunks, gen) {
 
 async function loadCatalogues(gen) {
   const half = S.size * K.PIX / 3600 / 2, t = S.target;
-  const add = list => { if (gen === S.gen) { S.catalog.push(...list); invalidate(false); buildField(); } };
+  const add = list => { if (gen === S.gen) { S.catalog.push(...list); invalidate(false); buildField(); if (S.sel) showSource(); } };
   if (t.obj) add([{ ...t.obj, name: t.name, target: true }]);
   Cat.gaia(t.ra, t.dec, half * 60 * 1.5).then(add).catch(() => {});
   // SIMBAD positions are J2000, so pad the search by 6' to catch fast movers that have since arrived here
@@ -274,7 +274,8 @@ function drawOverlay(cv, W, cur) {
         continue;
       }
       const named = o.src === 'SIMBAD';
-      if (o.src !== 'SIMBAD' && S.zoom < 2 && (o.src === 'CatWISE' ? o.mag > 15.5 : o.mag > 16.5 || o.mag == null)) continue;   // faint ones appear when zoomed in
+      if (o.src === 'CatWISE' && S.zoom < 3 && !(totalPm(o) > 0.3 && totalPm(o) * 1000 > 5 * o.epm)) continue;   // CatWISE earns its place for real movers Gaia cannot see
+      if (o.src === 'Gaia DR3' && S.zoom < 2 && !(o.mag <= 16.5)) continue;          // faint ones appear when zoomed in
       g.strokeStyle = g.fillStyle = css('--known'); g.globalAlpha = named ? 0.95 : 0.55;
       g.beginPath();
       if (o.src === 'CatWISE') g.rect(x - 4 * dpr, y - 4 * dpr, 8 * dpr, 8 * dpr); else g.arc(x, y, (named ? 7 : 4.5) * dpr, 0, 7);
@@ -356,7 +357,7 @@ function buildStrip() {
 function setWindow(a, b, sync = true) {
   S.wmin = Math.max(K.WMIN, Math.min(a, b)); S.wmax = Math.min(K.WMAX, Math.max(a, b));
   dirty = true; computeFrames(); dirty = false;
-  if (S.sel) drawTimeChart();
+  if (S.sel) { S.fit = fitMotion(); drawTimeChart(); }
   renderAll();
   if (sync) syncUrl();
 }
@@ -431,8 +432,7 @@ function selectSky(ra, dec, mjd = S.frames[S.frame]?.mjd || K.REF_MJD, forced = 
     const [c, r] = K.toGrid(...K.propagate(o, mjd, earth), S.c), d = Math.hypot(c - col, r - row) - (o.target ? 0.6 : o.src === 'SIMBAD' ? 0.3 : 0);
     if (d < md) { md = d; match = o; }
   }
-  const inGaia = S.catalog.some(o => o.src === 'Gaia DR3' && Math.hypot(...K.toGrid(...K.propagate(o, mjd), S.c).map((v, i) => v - [col, row][i])) < 1.5);
-  S.sel = { ra, dec, mjd0: mjd, pmra: match?.pmra || 0, pmde: match?.pmde || 0, match, inGaia, measuredPm: false };
+  S.sel = { ra, dec, mjd0: mjd, pmra: match?.pmra || 0, pmde: match?.pmde || 0, match, measuredPm: false };
   measure(); syncUrl(); renderEye();
 }
 
@@ -440,7 +440,7 @@ function measure() {
   const size = S.size, s = S.sel;
   const run = () => S.exps.map(e => {
     const [col, row] = selGrid(e.mjd);
-    const a = K.aperture(e, size, col, row), cen = a.ok ? K.centroid(e, size, col, row, 2.5, a.sky) : null, w = K.wingFlux(e, size, col, row);
+    const a = K.aperture(e, size, col, row), cen = a.ok ? K.locate(e, size, col, row) : null, w = K.wingFlux(e, size, col, row);
     return { e, col, row, wave: K.waveAt(e, size, col, row), ...a, cen, wing: w.ok ? w.flux : NaN };
   }).filter(m => m.ok);
   S.meas = run();
@@ -450,20 +450,29 @@ function measure() {
     s.pmra += S.fit.pe * 1000; s.pmde += S.fit.pn * 1000; s.measuredPm = true;
     S.meas = run(); S.fit = fitMotion();
   }
-  s.saturated = S.meas.filter(m => m.sat).length > 0.3 * S.meas.length;
+  s.saturated = S.meas.filter(m => m.sat || m.hole).length > 0.3 * S.meas.length;
   showSource();
 }
 
 /** Proper motion from the centre of light in every exposure where the source is clearly detected. */
 function fitMotion() {
-  const pts = S.meas.filter(m => m.cen && m.cen[2] > 10 && !m.flagged);
-  if (pts.length < 8) return null;
-  const s = S.sel, t = pts.map(m => (m.e.mjd - s.mjd0) / 365.25), mid = (S.size - 1) / 2;
+  const s = S.sel, mid = (S.size - 1) / 2;
+  let pts = S.meas.filter(m => m.cen && m.cen[2] > 10 && m.wave >= S.wmin && m.wave <= S.wmax), stacked = false;     // the line fit clips the odd bad one
+  if (pts.length < 8) {          // too faint in single exposures: use its centre of light in each date's stack instead
+    pts = S.frames.filter(Boolean).map(f => {
+      const fake = { img: f.img, cat: new Uint8Array(S.size * S.size), noise: S.lim.sig, mjd: f.mjd, epoch: f.epoch.i };
+      const cen = K.centroid(fake, S.size, ...selGrid(f.mjd));
+      return cen && cen[2] > 4 ? { e: fake, cen } : null;
+    }).filter(Boolean);
+    stacked = true;
+    if (pts.length < 3) return null;
+  }
+  const t = pts.map(m => (m.e.mjd - s.mjd0) / 365.25);
   // offsets on the sky in arcsec, measured from the grid centre: east is toward lower columns
   const east = pts.map(m => (mid - m.cen[0]) * K.PIX), north = pts.map(m => (m.cen[1] - mid) * K.PIX);
   const fe = K.lineFit(t, east), fn = K.lineFit(t, north);
   if (!fe || !fn) return null;
-  return { pts, t, east, north, fe, fn, pe: fe.b, pn: fn.b, total: Math.hypot(fe.b, fn.b), err: Math.hypot(fe.eb, fn.eb), pa: (Math.atan2(fe.b, fn.b) * 180 / Math.PI + 360) % 360 };
+  return { pts, t, east, north, fe, fn, stacked, pe: fe.b, pn: fn.b, total: Math.hypot(fe.b, fn.b), err: Math.hypot(fe.eb, fn.eb), pa: (Math.atan2(fe.b, fn.b) * 180 / Math.PI + 360) % 360 };
 }
 
 function showSource() {
@@ -474,38 +483,55 @@ function showSource() {
   $('#src-name').innerHTML = `<b>${esc(name || 'Unnamed source')}</b>${K.sexa(s.ra, s.dec)}`;
   const badges = [];
   if (s.match) badges.push(['known', `in ${s.match.src}${s.match.type ? ` (${s.match.type})` : ''}`]);
-  if (!s.inGaia) badges.push(['found', 'not in Gaia']);
-  if (s.saturated) badges.push(['warn', 'saturated: brightness unreliable']);
-  if (S.meas.length - good.length) badges.push(['', `${S.meas.length - good.length} of ${S.meas.length} exposures left out (flagged)`]);
+  const [sc, sr] = K.toGrid(s.ra, s.dec, S.c), gaia = S.catalog.filter(o => o.src === 'Gaia DR3');      // checked now, not at click time: Gaia may load later
+  if (gaia.length && !gaia.some(o => { const [c, r] = K.toGrid(...K.propagate(o, s.mjd0), S.c); return Math.hypot(c - sc, r - sr) < 1.5; })) badges.push(['found', 'not in Gaia']);
+  const holes = S.meas.filter(m => m.hole).length;
+  if (s.saturated) badges.push(['warn', holes ? `saturated: core blank in ${holes} of ${S.meas.length} exposures` : 'saturated: brightness unreliable']);
+  else if (S.meas.length - good.length) badges.push(['', `${S.meas.length - good.length} of ${S.meas.length} exposures flagged`]);
   if (s.measuredPm) badges.push(['found', 'following its measured motion']);
   $('#src-badges').innerHTML = badges.map(([c, t]) => `<span class="badge ${c}">${esc(t)}</span>`).join('');
   drawSpectrum(); drawTimeChart();
 }
 
-function medianSpectrum(val) {       // the source's own typical brightness at each wavelength, in 60 log-spaced bins
-  const bins = Array.from({ length: 60 }, () => []);
-  for (const m of S.meas) if (!m.flagged && isFinite(val(m))) bins[Math.min(59, Math.floor(wx(m.wave) * 60))].push(val(m));
-  const med = bins.map(b => (b.length ? K.median(b) : NaN));
-  return { med, at: w => med[Math.min(59, Math.floor(wx(w) * 60))] };
+/** The source's own typical brightness at each wavelength: medians in log-spaced bins (fewer, wider bins when faint). */
+function medianSpectrum(val) {
+  const ok = S.meas.filter(m => isFinite(val(m)));
+  const n = K.median(ok.map(m => Math.abs(val(m)) / m.err)) > 8 ? 60 : 20;
+  const bin = w => Math.min(n - 1, Math.max(0, Math.floor(wx(w) * n)));       // wavelengths just outside the nominal range go in the end bins
+  const bins = Array.from({ length: n }, () => []);
+  for (const m of ok) bins[bin(m.wave)].push(val(m));
+  const med = bins.map(b => (b.length >= 3 ? K.median(b) : NaN));
+  return { med, n, at: w => med[bin(w)] };
+}
+
+/** A y-range that a few wild points cannot stretch: the 2nd to 98th percentile, padded, always including zero. */
+function calmRange(v) {
+  const lo = K.percentile(v, 0.02), hi = K.percentile(v, 0.98), pad = 0.3 * (hi - lo || Math.abs(hi) || 1);
+  return [Math.min(0, lo - pad), hi + pad];
 }
 
 function drawSpectrum() {
-  const spec = medianSpectrum(m => m.flux);
-  const line = spec.med.map((v, i) => [xw((i + 0.5) / 60), v]).filter(p => isFinite(p[1]));
-  const good = S.meas.filter(m => !m.flagged);
+  const sat = S.sel.saturated, usable = S.meas.filter(m => !m.hole);         // a blank core gives no flux at all
+  const spec = medianSpectrum(m => (m.hole || (!sat && m.flagged) ? NaN : m.flux));
+  const big = Math.max(...spec.med.filter(isFinite), 0) > 20000, u = big ? 1000 : 1, unit = big ? 'mJy' : 'µJy', dp = big ? 1 : 0;
+  const line = spec.med.map((v, i) => [xw((i + 0.5) / spec.n), v / u]).filter(p => isFinite(p[1]));
+  const good = usable.filter(m => !m.flagged);
   scatter($('#ch-spec'), {
-    points: S.meas.map(m => ({ x: m.wave, y: m.flux, e: m.err, color: epochColor(m.e.epoch), hollow: m.flagged || m.sat, data: m,
-      tip: `${m.wave.toFixed(3)} µm · ${fmtDate(m.e.mjd)}\n${m.flux.toFixed(0)} ± ${m.err.toFixed(0)} µJy${m.flux > 0 ? ` (AB ${K.abMag(m.flux).toFixed(2)})` : ''}${m.flagged ? '\nflagged pixel in aperture' : m.sat ? '\nnear saturation' : ''}` })),
+    points: usable.map(m => ({ x: m.wave, y: m.flux / u, e: m.err / u, color: epochColor(m.e.epoch), hollow: m.flagged || m.sat, data: m,
+      tip: `${m.wave.toFixed(3)} µm · ${fmtDate(m.e.mjd)}\n${(m.flux / u).toFixed(dp)} ± ${(m.err / u).toFixed(dp)} ${unit}${m.flux > 0 ? ` (AB ${K.abMag(m.flux).toFixed(2)})` : ''}${m.flagged ? '\nflagged pixel in aperture' : m.sat ? '\nnear saturation' : ''}` })),
     lines: [{ pts: line, color: css('--sel'), width: 1.5 }],
     bands: K.DET.map(([x0, x1], i) => ({ x0, x1, color: detColor(i + 1) })),
-    marks: S.mol ? MOLECULES : [], xdom: [0.7, 5.1], xticks: [1, 2, 3, 4, 5], ylog: S.log, yzero: true,
-    xlabel: 'wavelength (µm)', ylabel: 'flux density (µJy)',
+    marks: S.mol ? MOLECULES : [], xdom: [0.7, 5.1], xticks: [1, 2, 3, 4, 5], ylog: S.log,
+    ydom: calmRange((good.length >= 5 ? good : usable).map(m => m.flux / u)),
+    xlabel: 'wavelength (µm)', ylabel: `flux density (${unit})`,
     summary: `Spectrum: ${S.meas.length} measurements from ${K.WMIN} to ${K.WMAX} micrometres.`,
     onHover: p => { S.peek = p ? p.data.e : null; renderEye(); },
   });
   const peak = line.reduce((a, b) => (b[1] > a[1] ? b : a), [0, -Infinity]);
-  $('#spec-sum').textContent = good.length ? `${S.meas.length} measurements, one per exposure. Typical peak ${peak[1].toFixed(0)} µJy (AB ${K.abMag(peak[1]).toFixed(1)}) near ${peak[0].toFixed(2)} µm. ` +
-    'Aperture fluxes (radius 15″), no aperture correction: expect about 10 % low. Hover a point to see the exposure it came from.' : 'No clean measurements here.';
+  $('#spec-sum').textContent = !line.length ? 'No usable measurements here: the core is blank (saturated) in every exposure. Brightness over time below uses its outer light.' :
+    `${usable.length} measurements, one per exposure. Typical peak ${peak[1].toFixed(dp)} ${unit} (AB ${K.abMag(peak[1] * u).toFixed(1)}) near ${peak[0].toFixed(2)} µm. ` +
+    (sat ? `Too bright for SPHEREx: ${S.meas.length - usable.length} exposures have a blank core and are not shown, and the rest (hollow) are near saturation, so treat this as a rough lower limit. `
+      : 'Aperture fluxes (radius 15″), no aperture correction: expect about 10 % low. ') + 'Hover a point to see the exposure it came from.';
   const rows = ['wavelength_um,flux_uJy,err_uJy,mjd,detector,flagged,near_saturation,file'].concat(S.meas.map(m =>
     [m.wave.toFixed(4), m.flux.toFixed(2), m.err.toFixed(2), m.e.mjd, m.e.det, +m.flagged, +m.sat, m.e.key.split('/').pop()].join(',')));
   $('#c-csv').href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
@@ -527,19 +553,23 @@ function drawTimeChart() {
       xlabel: 'date', ylabel: 'shift (arcsec)', xfmt, summary: `Position over time: moving ${f.total.toFixed(2)} arcseconds per year.`,
     });
     const cat = s.match && totalPm(s.match) > 0 ? ` Catalogue (${s.match.src}): ${totalPm(s.match).toFixed(2)}″/yr toward ${((Math.atan2(s.match.pmra, s.match.pmde) * 180 / Math.PI + 360) % 360).toFixed(0)}°.` : '';
-    const sig = f.total / f.err;
-    $('#time-sum').textContent = `Measured from ${f.pts.length} exposures: ${f.total.toFixed(2)} ± ${f.err.toFixed(2)}″ per year toward ${f.pa.toFixed(0)}° (north = 0°, east = 90°).` +
-      `${sig < 3 ? ' That is consistent with no motion.' : ''}${cat} Filled = north, hollow = east.`;
+    const sig = f.total / f.err, cpm = s.match ? totalPm(s.match) : 0;
+    const clash = cpm > 0.5 && Math.hypot(f.pe - s.match.pmra / 1000, f.pn - s.match.pmde / 1000) > Math.max(5 * f.err, 0.3 * cpm);
+    $('#time-sum').textContent = `Measured from ${f.pts.length} ${f.stacked ? 'stacked dates (too faint in single exposures)' : 'exposures'} at ${S.wmin.toFixed(2)}–${S.wmax.toFixed(2)} µm: ` +
+      `${f.total.toFixed(2)} ± ${f.err.toFixed(2)}″ per year toward ${f.pa.toFixed(0)}° (north = 0°, east = 90°).${sig < 4 ? ' That is not a significant motion.' : ''}${cat}` +
+      (clash ? ' These do not agree: at these wavelengths the light here may come from a background star. Try another colour window.' : '') +
+      (s.saturated ? ' Located from the star’s outer light, which is less precise.' : '') + ' Filled = north, hollow = east.';
     return;
   }
   // brightness over time: each point divided by the source's own typical brightness at that wavelength,
   // so all colours in the window count toward one curve. Saturated stars use their unsaturated outer light.
-  const val = s.saturated ? m => m.wing : m => m.flux, spec = medianSpectrum(val);
+  const val = s.saturated ? m => m.wing : m => (m.flagged ? NaN : m.flux), spec = medianSpectrum(val);
   const pts = S.meas.filter(m => !m.flagged && m.wave >= S.wmin && m.wave <= S.wmax).map(m => ({ m, rel: val(m) / spec.at(m.wave) })).filter(p => isFinite(p.rel) && spec.at(p.m.wave) > 0);
   const means = S.search.epochs.map(ep => { const v = pts.filter(p => p.m.e.epoch === ep.i); return v.length >= 3 ? [K.median(v.map(p => p.m.e.mjd)), K.median(v.map(p => p.rel))] : null; }).filter(Boolean);
   scatter($('#ch-time'), {
     points: pts.map(p => ({ x: p.m.e.mjd, y: p.rel, color: epochColor(p.m.e.epoch), tip: `${fmtDate(p.m.e.mjd)} · ${p.m.wave.toFixed(2)} µm\n${p.rel.toFixed(2)} × its average` })),
-    lines: [{ pts: means, color: css('--sel'), width: 1.5 }], xlabel: 'date', ylabel: 'brightness ÷ own average', xfmt, yzero: true,
+    lines: [{ pts: means, color: css('--sel'), width: 1.5 }], xlabel: 'date', ylabel: 'brightness ÷ own average', xfmt,
+    ydom: pts.length ? calmRange(pts.map(p => p.rel).concat(2)) : undefined,
     summary: `Brightness over time from ${pts.length} measurements.`,
   });
   const lo = Math.min(...means.map(p => p[1])), hi = Math.max(...means.map(p => p[1]));
@@ -555,7 +585,7 @@ function buildField() {
     .filter(x => Math.abs(x.g[0] - half) < half && Math.abs(x.g[1] - half) < half).sort((a, b) => totalPm(b.o) - totalPm(a.o)).slice(0, 40);
   const li = (cls, name, meta, on) => { const e = document.createElement('li'); e.innerHTML = `<span class="dot ${cls}"></span><span>${esc(name)}</span><span class="m">${esc(meta)}</span>`; e.onclick = on; return e; };
   $('#field').replaceChildren(
-    ...S.movers.map(m => li(m.known ? '' : 'found', m.known ? m.known.name : 'Uncatalogued mover', `${m.total.toFixed(2)} ± ${m.err.toFixed(2)}″/yr`, () => { const [ra, dec] = K.fromGrid(m.col, m.row, S.c); selectSky(ra, dec, m.mjd0); })),
+    ...S.movers.map(m => li(m.known ? '' : 'found', m.known ? m.known.name : 'Uncatalogued mover', `measured ${m.total.toFixed(2)} ± ${m.err.toFixed(2)}″/yr${m.known ? ` · catalogue ${totalPm(m.known).toFixed(2)}` : ''}`, () => { const [ra, dec] = K.fromGrid(m.col, m.row, S.c); selectSky(ra, dec, m.mjd0); })),
     ...items.map(({ o }) => li('', o.name, `${o.type || ''}${totalPm(o) > 0.05 ? ` · ${totalPm(o).toFixed(2)}″/yr` : ''}`, () => { const [ra, dec] = K.propagate(o, S.frames[S.frame]?.mjd || K.REF_MJD); selectSky(ra, dec, undefined, o); })));
   if (!S.movers.length) $('#field-note').textContent = items.length ? 'Named objects in view, fastest first. Click one to measure it.' : '';
 }
@@ -568,10 +598,20 @@ async function scan() {             // measure the motion of every bright dot; l
   const peaks = K.findPeaks(all.img, size, med + 15 * sig, 3, 5).slice(0, 150), mid = (size - 1) / 2, mjd0 = K.median(S.exps.map(e => e.mjd));
   for (let i = 0; i < peaks.length; i++) {
     if (i % 8 === 0) { $('#field-note').textContent = `Scanning ${i + 1} of ${peaks.length} sources…`; await new Promise(requestAnimationFrame); if (gen !== S.gen) return; }
-    const [pc, pr] = peaks[i], t = [], east = [], north = [];
-    for (const e of S.exps) { const c = K.centroid(e, size, pc, pr); if (c && c[2] > 10) { t.push((e.mjd - mjd0) / 365.25); east.push((mid - c[0]) * K.PIX); north.push((c[1] - mid) * K.PIX); } }
-    const fe = K.lineFit(t, east), fn = K.lineFit(t, north);
+    const [pc, pr] = peaks[i];
+    const track = (pe, pn, c0, r0) => {         // centre of light in every exposure, starting from where a mover would be
+      const t = [], east = [], north = [];
+      for (const e of S.exps) {
+        const dt = (e.mjd - mjd0) / 365.25, c = K.locate(e, size, c0 - pe * dt / K.PIX, r0 + pn * dt / K.PIX);
+        if (c && c[2] > 10) { t.push(dt); east.push((mid - c[0]) * K.PIX); north.push((c[1] - mid) * K.PIX); }
+      }
+      return [K.lineFit(t, east), K.lineFit(t, north)];
+    };
+    let [fe, fn] = track(0, 0, pc, pr);
     if (!fe || !fn || fe.n < 15) continue;
+    if (Math.hypot(fe.b, fn.b) < 0.3 || Math.hypot(fe.b, fn.b) < 6 * Math.hypot(fe.eb, fn.eb)) continue;
+    const again = track(fe.b, fn.b, mid - fe.a / K.PIX, mid + fn.a / K.PIX);      // follow the first estimate and measure again
+    if (again[0] && again[1]) [fe, fn] = again;
     const total = Math.hypot(fe.b, fn.b), err = Math.hypot(fe.eb, fn.eb);
     if (total < 0.3 || total < 6 * err) continue;
     const col = mid - fe.a / K.PIX, row = mid + fn.a / K.PIX;
@@ -582,7 +622,7 @@ async function scan() {             // measure the motion of every bright dot; l
   btn.disabled = false;
   const fresh = S.movers.filter(m => !m.known).length;
   $('#field-note').textContent = `${peaks.length} sources measured. ${S.movers.length} move${S.movers.length === 1 ? 's' : ''} faster than 0.3″ per year` +
-    (S.movers.length ? `; ${fresh} ${fresh === 1 ? 'is' : 'are'} not in Gaia or SIMBAD.` : '.') + (fresh ? ' Check an uncatalogued mover with the flags overlay before believing it.' : '');
+    (S.movers.length ? `; ${fresh} ${fresh === 1 ? 'is' : 'are'} not in Gaia or SIMBAD.` : '.') + (S.movers.length ? ' A star beside a bright mover can be dragged along by its glow: compare with the catalogue value, and check with the flags overlay.' : '');
   buildField(); renderEye();
 }
 

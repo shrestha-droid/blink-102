@@ -177,7 +177,7 @@ export function ringSky(e, size, col, row, rin, rout) {
  */
 export function aperture(e, size, col, row, r = 2.5, rin = 5, rout = 8) {
   const sky = ringSky(e, size, col, row, rin, rout);
-  let sum = 0, area = 0, flagged = false, sat = false, missing = false;
+  let sum = 0, area = 0, flagged = false, sat = false, missing = false, hole = false;
   const R = Math.ceil(r + 1), c0 = Math.round(col), r0 = Math.round(row), S = 5;
   for (let rr = r0 - R; rr <= r0 + R; rr++) for (let cc = c0 - R; cc <= c0 + R; cc++) {
     let w = 0;       // share of this pixel inside the circle, from 5 x 5 sub-samples
@@ -187,14 +187,14 @@ export function aperture(e, size, col, row, r = 2.5, rin = 5, rout = 8) {
     w /= S * S;
     if (rr < 0 || cc < 0 || rr >= size || cc >= size) { missing = true; continue; }
     const p = rr * size + cc, x = e.img[p];
-    if (x !== x) { missing = true; continue; }
+    if (x !== x) { hole = true; continue; }       // blank pixel: a saturated core, or the detector's edge
     if (e.cat[p] & MASK && w > 0.2) flagged = true;
     if (e.cat[p] & NEAR_SAT) sat = true;
     sum += w * (x - sky); area += w;
   }
   const flux = sum * UJY;
   const err = Math.hypot(Math.sqrt(area) * e.noise * UJY, 0.03 * flux);
-  return { flux, err, sky, flagged, sat, ok: !missing && area > 0 };
+  return { flux, err, sky, flagged: flagged || hole, sat, hole, ok: !missing && area > 0 };
 }
 
 /** Brightness from the unsaturated outer light of a star (ring 4-8 px), for stars too bright for their core. */
@@ -232,6 +232,42 @@ export function centroid(e, size, col, row, r = 2.5, sky = null) {
     if (Math.hypot(cx - col, cy - row) > r + 1) return null;      // wandered off to a neighbour
   }
   return [cx, cy, sum / (Math.sqrt(n) * (e.noise || 1))];
+}
+
+/**
+ * Centre of a star whose core is saturated, from its unsaturated outer light: the flux-weighted centre of a ring,
+ * re-centred until it stops moving. Returns [col, row, signal-to-noise] or null.
+ */
+export function wingCentroid(e, size, col, row, rin = 4, rout = 9) {
+  const sky = ringSky(e, size, col, row, 11, 14);
+  let cx = col, cy = row, sum = 0, n = 0;
+  for (let it = 0; it < 20; it++) {
+    let sx = 0, sy = 0, total = 0; sum = 0; n = 0;
+    const c0 = Math.round(cx), r0 = Math.round(cy), R = Math.ceil(rout);
+    for (let rr = r0 - R; rr <= r0 + R; rr++) for (let cc = c0 - R; cc <= c0 + R; cc++) {
+      const d = Math.hypot(cc - cx, rr - cy);
+      if (d < rin || d > rout) continue;
+      total++;
+      if (rr < 0 || cc < 0 || rr >= size || cc >= size) continue;
+      const p = rr * size + cc, x = e.img[p] - sky;
+      if (x !== x || e.cat[p] & (MASK | NEAR_SAT) || x <= 0) continue;
+      sx += x * (cc - cx); sy += x * (rr - cy); sum += x; n++;
+    }
+    if (!(sum > 0) || n < 0.4 * total) return null;
+    const dx = 0.5 * sx / sum, dy = 0.5 * sy / sum;   // a hard-edged ring over-reports an offset, so take half steps
+    cx += dx; cy += dy;
+    if (Math.hypot(cx - col, cy - row) > 4) return null;
+    if (Math.hypot(dx, dy) < 0.01) break;
+  }
+  return [cx, cy, sum / (Math.sqrt(n) * (e.noise || 1))];
+}
+
+/** Where a source is in one exposure: its core if usable, else its outer light. Returns [col, row, S/N, usedWings]. */
+export function locate(e, size, col, row) {
+  const a = centroid(e, size, col, row);
+  if (a && a[2] > 10) return [...a, false];
+  const w = wingCentroid(e, size, col, row);
+  return w ? [...w, true] : a ? [...a, false] : null;
 }
 
 /** Straight-line fit y = a + b (t - t0) with 3-sigma clipping. Returns {a, b, eb (error on b), t0, rms, n}. */
@@ -301,6 +337,14 @@ if (typeof process !== 'undefined' && process.argv[1]?.endsWith('sky.js')) {
   const ce = centroid(exps[0], size, 10, 10); near(ce[0], 10.3, 0.1); near(ce[1], 9.6, 0.1);
   near(aperture(exps[0], size, 10.3, 9.6, 4, 7, 9).flux, 10 * 2 * Math.PI * UJY, 0.03 * 10 * 2 * Math.PI * UJY);
   near(lineFit([0, 1, 2, 3, 4], [1, 3, 5, 7, 9]).b, 2, 1e-9);
+  const big = 41, sat = { img: new Float32Array(big * big), cat: new Uint8Array(big * big), noise: 0.01 };   // saturated star at (20.6, 19.3)
+  for (let r = 0; r < big; r++) for (let q = 0; q < big; q++) {
+    const d = Math.hypot(q - 20.6, r - 19.3), p = r * big + q;
+    sat.img[p] = d < 2 ? NaN : 1000 / (1 + d * d) ** 1.5; if (d < 3.5) sat.cat[p] = 0b10000;
+  }
+  if (centroid(sat, big, 20, 20)) throw new Error('a masked core must not give a core centroid');
+  const wc = locate(sat, big, 20, 20); near(wc[0], 20.6, 0.1); near(wc[1], 19.3, 0.1); if (!wc[3]) throw new Error('wings');
+  if (!aperture(sat, big, 20.6, 19.3).hole) throw new Error('hole');
   const pk = findPeaks(stack(exps, size).img, size, 1); near(pk[0][0], 10, 0); near(pk[0][1], 10, 0);
   if (planChunks(Array.from({ length: 40 }, (_, i) => ({ key: 'k' + i, det: 1 + i % 2, epoch: 0 })), 8).flat().length !== 16) throw new Error('plan');
   console.log('sky.js self-check passed');
