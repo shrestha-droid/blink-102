@@ -17,7 +17,10 @@ SPHEREx photographs the sky in 102 infrared colours, so Blink 102 also lets you:
 - **choose the colours** that go into the picture with one slider (or press **Sweep** to slide through all of them);
 - **click any star** to get its spectrum, its brightness over time and its measured motion, from every single exposure;
 - **see where known stars should be** on each date: Gaia, SIMBAD and CatWISE positions are moved forward by their proper motion;
-- **scan the field** for anything that moves, and see which movers are not in a catalogue;
+- **scan the field** for anything that moves, and see which movers are not in a catalogue. Bright dots are tracked in every single exposure; faint ones through the stacked dates;
+- **follow a mover**: hold the selected object still while the sky moves behind it, and stack every date into one deep picture of it;
+- **read a spectrum at a glance**: peak brightness, a blackbody temperature, and how deep the water and methane bands are;
+- **find a period** in a variable star's brightness, with the odds that noise alone would produce it;
 - **share a link** that reopens exactly the same view, or embed the viewer in another page.
 
 ## How to use it
@@ -28,7 +31,8 @@ SPHEREx photographs the sky in 102 infrared colours, so Blink 102 also lets you:
 | Step through dates | `←` `→`, or click a small picture. `Space` plays and pauses |
 | Change colour | Drag the window on the colour bar, click a detector (D1–D6), or press `S` to sweep |
 | Measure a star | Click it. Hover a point in the spectrum to see the exact exposure it came from |
-| See what moved | `D` for difference mode, or **Scan for movers** |
+| See what moved | `D` for difference mode, or **Scan for movers** (add `&scan=1` to a link to run it on load) |
+| Follow a mover | Select it, then `T` to follow and `A` to stack all dates |
 | See what SPHEREx flagged | `F` |
 | Share | **Copy link**. Add `&embed=1` to the link to embed only the viewer in an `<iframe>` |
 
@@ -41,12 +45,14 @@ Measured with `node scripts/validate.mjs`, which uses the same routines as the p
 | Target | What Blink 102 shows | Measured | Catalogue |
 |---|---|---|---|
 | **Barnard's Star** | Steps north between the three passes (Sep 2025, Apr 2026, Sep 2026) | 10.38 ± 0.46″/yr | 10.39″/yr |
-| **eps Indi B** | Drifts across four passes; its spectrum shows the J, H and K peaks, methane absorption and a 4.1 µm peak of 59 mJy | 4.59 ± 0.04″/yr | 4.68″/yr |
+| **eps Indi B** | Drifts across four passes; its spectrum shows the J, H and K peaks, methane absorption and a 4.1 µm peak of 59 mJy | 4.59 ± 0.04″/yr; methane band 80 ± 3 % deep, water band 84 ± 5 % deep | 4.68″/yr; a T-type brown dwarf pair |
 | **WISE 0855−0714** | Invisible at short wavelengths; a dot at 3.8–5.0 µm that follows the predicted track | 450–550 µJy (AB ≈ 17.1), signal-to-noise 9–17 per date, within 4″ of the predicted position on every date; motion from the three stacked dates 5.7 ± 1.1″/yr toward 270° | W2 = 13.9 mag (≈ 480 µJy); 8.15″/yr toward 275° |
 | **RW Aur** | Brightness changes between passes, differently at different wavelengths | 0.69 mag change at 3.8–5.0 µm, 0.12 mag over all colours (from its outer light) | irregular variable |
-| **R Dra** | Brightness swings over 17 monthly dates | 1.7 mag range (faintest Sep–Oct 2025 and Jun 2026, about 245 days apart) | Mira variable, period ≈ 246 days |
+| **R Dra** | Brightness swings over 17 monthly dates | 1.7 mag range; period 245 ± 61 days from two cycles (noise would do this less than 1 time in 100) | Mira variable, period ≈ 246 days |
 
 Motions are fitted to the centre of light in every single exposure, after removing the catalogue parallax.
+
+**Blind recovery of WISE 0855.** Starting from the challenge's own coordinates (its 2010 position) with the colour window on 3.8–5.0 µm, **Scan for movers** measures 24 sources and reports exactly one mover: WISE 0855, at 5.4 ± 1.0″/yr. The page also notices that a fast-moving catalogue object is now 2.1′ away and offers to recentre on it. On the eps Indi field the same scan finds eps Indi B at 4.48 ± 0.06″/yr.
 
 **Flux check against 2MASS** (`node scripts/fluxcheck.mjs`): for four isolated, unsaturated field stars (Ks 10.4–11.4), the flux Blink 102 measures near 2.16 µm is 0.99, 1.01, 1.02 and 1.05 times the 2MASS Ks flux. A fifth 2MASS source in the eps Indi field has nothing at its 1999 position: it is eps Indi B itself, which has since moved 2′.
 
@@ -58,6 +64,7 @@ Honest limits:
 - **The challenge's coordinates for WISE 0855 are its position around 2010.** It has since moved about 2′. Blink 102 recentres on where an object is now, and offers to recentre when you type old coordinates.
 - **WISE 0855 at short wavelengths:** a faint background star sits a few arcseconds from its current position, so light measured there below 2.4 µm is not the brown dwarf. The motion readout warns when measured and catalogue motions disagree.
 - Fluxes are aperture sums (radius 15″). We measured the light outside that aperture on field stars: 2–4 % at 0.75–2.4 µm, too small and too noisy from one or two stars per field to be worth applying, so no correction is made.
+- We tried the classic shift-and-stack search (subtract the static sky, slide the dates along trial motions, add). At SPHEREx's 6″ pixels and six-month cadence a nearby star moves less than its own image width between dates, so it subtracts itself away; following each dot's centre of light through the dates works better and is what the scan does.
 - The motion scan can be fooled next to a very bright moving star, whose glow drags neighbours' centres along. It prints the catalogue value beside each measurement for comparison.
 
 ## How it works

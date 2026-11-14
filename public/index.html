@@ -10,6 +10,10 @@
 try { const t = localStorage.getItem('blink-theme'); if (t) document.querySelector('meta[name="color-scheme"]').content = t; } catch {}
 </script>
 <title>Blink 102: blink the infrared sky in 102 colours</title>
+<meta property="og:title" content="Blink 102">
+<meta property="og:description" content="Blink the infrared sky in 102 colours. Click any star for its spectrum.">
+<meta property="og:image" content="https://blink-102.vercel.app/og.png">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="description" content="Type a sky position or a name and watch NASA SPHEREx images of that spot change over time. Click any star for its spectrum.">
 <link rel="icon" href="mark.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -18,103 +22,110 @@ try { const t = localStorage.getItem('blink-theme'); if (t) document.querySelect
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="top">
+<header class="mast">
   <a class="brand" href="./" aria-label="Blink 102, start page">
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="2.5" y="2.5" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="8.5" y="8.5" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="10.6" cy="10.6" r="1.5" fill="currentColor"/><circle cx="13.6" cy="13" r="1.5" fill="currentColor" opacity=".45"/></svg>
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="2.5" y="2.5" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="8.5" y="8.5" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="10.6" cy="10.6" r="1.5" fill="currentColor"/><circle cx="13.6" cy="13" r="1.5" fill="currentColor" opacity=".45"/></svg>
     <span class="name">Blink 102</span>
   </a>
+  <p class="tagline">Pluto was found by blinking two photographs. This blinks the infrared sky in 102 colours.</p>
   <form id="search" role="search">
     <label class="vh" for="q">Object name or coordinates</label>
-    <input id="q" type="search" placeholder="A name (Barnard's star) or coordinates (08 55 10.83 -07 14 42.5)" autocomplete="off" spellcheck="false" enterkeyhint="go">
-    <button type="submit">Go</button>
+    <input id="q" type="search" placeholder="Name or coordinates, e.g. 08 55 10.83 −07 14 42.5" autocomplete="off" spellcheck="false" enterkeyhint="go">
+    <button type="submit" class="go" aria-label="Go">↵</button>
   </form>
-  <nav class="top-actions">
-    <button id="b-theme" type="button" aria-pressed="false" title="Plate theme: black stars on paper (I)">Plate</button>
-    <button id="b-link" type="button" title="Copy a link to exactly this view">Copy link</button>
-    <button id="b-help" type="button" command="show-modal" commandfor="help" title="Help and shortcuts (?)">?</button>
+  <nav class="mast-actions">
+    <button id="b-theme" type="button" class="quiet" aria-pressed="false" title="Plate theme: black stars on paper (I)">Plate</button>
+    <button id="b-link" type="button" class="quiet" title="Copy a link to exactly this view">Copy link</button>
+    <button id="b-help" type="button" class="quiet" command="show-modal" commandfor="help" title="Help and shortcuts (?)">Help</button>
   </nav>
 </header>
-
-<p class="tagline"><span>Pluto was found by blinking two photographs. This blinks the infrared sky in 102 colours.</span>
-  <span class="presets" id="presets" aria-label="Example targets">Try:</span></p>
-
-<div id="notice" class="notice" role="status" hidden></div>
-<div id="coach" class="coach" hidden>
-  <ol><li>The same patch of sky on different dates.</li><li>Drag the colour bar to change wavelength.</li><li>Click any star for its spectrum.</li></ol>
-  <button id="coach-ok" type="button">Got it</button>
+<div class="sub">
+  <p class="presets" id="presets" aria-label="Example targets"><span class="lab">Examples</span></p>
 </div>
 
 <main>
   <section class="left" aria-label="Viewer">
     <div class="eye-row">
-      <div class="eye" id="eye">
-        <canvas id="img" aria-label="SPHEREx image of the selected sky position"></canvas>
-        <canvas id="ovl" aria-hidden="true"></canvas>
-        <div class="hud tl" id="hud-target"></div>
-        <div class="hud tr" id="hud-epoch"></div>
-        <div class="hud bl" id="hud-scale"></div>
-        <div class="hud br" id="hud-wave"></div>
-        <div class="load" id="load" role="status"></div>
+      <div class="bezel">
+        <canvas id="bezel" aria-hidden="true"></canvas>
+        <div class="eye" id="eye">
+          <canvas id="img" aria-label="SPHEREx image of the selected sky position"></canvas>
+          <canvas id="ovl" aria-hidden="true"></canvas>
+          <div class="hud tl" id="hud-target"></div>
+          <div class="hud tr" id="hud-epoch"></div>
+          <div class="hud bl" id="hud-scale"></div>
+          <div class="hud br" id="hud-wave"></div>
+          <div class="load" id="load" role="status"></div>
+          <div class="bar"><i id="bar"></i></div>
+        </div>
       </div>
       <div class="tools" role="toolbar" aria-label="View controls">
-        <button id="t-zin" type="button" title="Zoom in (+)">Zoom +</button>
-        <button id="t-zout" type="button" title="Zoom out (−)">Zoom −</button>
-        <button id="t-diff" type="button" aria-pressed="false" title="Each date minus the others: movers show as a bright and dark pair (D)">Difference</button>
-        <button id="t-rgb" type="button" aria-pressed="false" title="Three wavelength ranges as blue, green, red: cold objects look red (C)">Colour</button>
-        <button id="t-flags" type="button" aria-pressed="false" title="Show pixels SPHEREx flagged (F)">Flags</button>
-        <button id="t-cat" type="button" aria-pressed="true" title="Known stars, moved to each date (G)">Catalogue</button>
-        <button id="t-snap" type="button" aria-pressed="true" title="Clicks snap to the nearest bright pixel">Snap</button>
-        <label class="tool-l" for="t-bright">Brightness</label>
-        <input id="t-bright" type="range" min="-2.5" max="1" step="0.05" value="0" aria-label="Brightness">
-        <label class="tool-l" for="t-fov">Field</label>
-        <select id="t-fov" aria-label="Field of view">
-          <option value="48">4.9′</option><option value="64" selected>6.6′</option><option value="96">9.8′</option><option value="128">13′</option><option value="160">16′ (slow)</option>
-        </select>
-        <button id="t-png" type="button" title="Save this frame as an image">Save PNG</button>
-        <button id="t-vid" type="button" title="Save the blink as a short video">Save video</button>
+        <h3>View</h3>
+        <button id="t-zin" type="button" class="row" title="Zoom in">Zoom in<kbd>+</kbd></button>
+        <button id="t-zout" type="button" class="row" title="Zoom out">Zoom out<kbd>−</kbd></button>
+        <label class="row" for="t-bright">Brightness<input id="t-bright" type="range" min="-2.5" max="1" step="0.05" value="0"></label>
+        <label class="row" for="t-fov">Field<select id="t-fov"><option value="48">4.9′</option><option value="64" selected>6.6′</option><option value="96">9.8′</option><option value="128">13′</option><option value="160">16′</option></select></label>
+        <h3>Compare</h3>
+        <button id="t-diff" type="button" class="row" aria-pressed="false" title="Each date minus the others: a mover shows as a bright and dark pair">Difference<kbd>D</kbd></button>
+        <button id="t-rgb" type="button" class="row" aria-pressed="false" title="Three wavelength ranges as blue, green, red: cold objects look red">Colour<kbd>C</kbd></button>
+        <button id="t-follow" type="button" class="row" aria-pressed="false" title="Hold the selected object still and let the sky move behind it">Follow<kbd>T</kbd></button>
+        <button id="t-all" type="button" class="row" aria-pressed="false" title="Stack every date into one deep picture">All dates<kbd>A</kbd></button>
+        <h3>Overlays</h3>
+        <button id="t-flags" type="button" class="row" aria-pressed="false" title="Pixels SPHEREx flagged">Flags<kbd>F</kbd></button>
+        <button id="t-cat" type="button" class="row" aria-pressed="true" title="Known stars, moved to each date">Catalogue<kbd>G</kbd></button>
+        <button id="t-snap" type="button" class="row" aria-pressed="true" title="Clicks snap to the nearest bright pixel">Snap to star</button>
+        <h3>Save</h3>
+        <button id="t-png" type="button" class="row" title="Save this frame as an image">Image</button>
+        <button id="t-vid" type="button" class="row" title="Save the blink as a short video">Video</button>
       </div>
     </div>
 
     <div class="rack" aria-label="Dates">
-      <button id="play" type="button" aria-pressed="true" title="Play or pause (Space)">Pause</button>
+      <button id="play" type="button" class="play" aria-pressed="true" title="Play or pause (Space)">Pause</button>
       <div class="plates" id="plates" role="listbox" aria-label="Sky passes"></div>
-      <label class="speed">Speed <input id="fps" type="range" min="0.5" max="8" step="0.5" value="2" aria-label="Frames per second"></label>
+      <label class="speed">Speed<input id="fps" type="range" min="0.5" max="8" step="0.5" value="2" aria-label="Frames per second"></label>
     </div>
 
-    <div class="strip-row">
+    <div class="filter">
+      <p class="strip-read"><span id="strip-read"></span><span class="strip-btns"><button id="b-all" type="button" class="quiet" title="Use all 102 colours">All colours<kbd>0</kbd></button><button id="b-sweep" type="button" class="quiet" aria-pressed="false" title="Slide the window from 0.75 to 5.0 µm">Sweep<kbd>S</kbd></button></span></p>
       <div class="strip" id="strip" aria-label="Wavelength selector, 0.75 to 5.0 micrometres">
-        <canvas id="strip-ticks" aria-hidden="true"></canvas>
         <div class="segs" id="segs"></div>
         <div class="win" id="win">
           <span class="h h0" id="h0" role="slider" tabindex="0" aria-label="Shortest wavelength"></span>
           <span class="h h1" id="h1" role="slider" tabindex="0" aria-label="Longest wavelength"></span>
         </div>
       </div>
-      <button id="b-all" type="button" title="Use all 102 colours (0)">All</button>
-      <button id="b-sweep" type="button" aria-pressed="false" title="Slide the window from 0.75 to 5.0 µm (S)">Sweep</button>
+      <canvas id="strip-ticks" aria-hidden="true"></canvas>
     </div>
 
     <div class="under">
-      <button id="b-more" type="button" hidden></button>
-      <button id="b-film" type="button" aria-expanded="false" aria-controls="film">Every exposure of this date</button>
-      <button id="b-wide" type="button" aria-expanded="false" aria-controls="wide">Wider sky</button>
+      <button id="b-more" type="button" class="quiet" hidden></button>
+      <button id="b-film" type="button" class="quiet" aria-expanded="false" aria-controls="film">Every exposure of this date</button>
+      <button id="b-wide" type="button" class="quiet" aria-expanded="false" aria-controls="wide">Wider sky</button>
     </div>
     <div id="film" class="drawer film" hidden></div>
     <div id="wide" class="drawer wide" hidden><div id="aladin"></div><p class="small" id="wide-note"></p></div>
   </section>
 
   <aside class="right" aria-label="Measurements">
-    <section class="card" id="card-src">
+    <div id="notice" class="notice" role="status" hidden></div>
+    <section id="card-src">
       <h2>Selected source</h2>
-      <p class="empty" id="src-empty">Click any star. You'll get its spectrum from every exposure SPHEREx has taken of it.</p>
+      <div class="empty" id="src-empty">
+        <p class="lead">Click any star.</p>
+        <p>You get its spectrum, its brightness over time and its motion, measured in every exposure SPHEREx has taken of it.</p>
+        <ol><li><b>The picture</b> is the same patch of sky on different dates.</li><li><b>The colour bar</b> chooses which infrared colours go into it.</li><li><b>Green rings</b> are known stars, drawn where they should be on each date.</li></ol>
+      </div>
       <div id="src" hidden>
         <p class="src-name" id="src-name"></p>
         <p class="badges" id="src-badges"></p>
+        <dl class="stats" id="stats"></dl>
         <div class="chart"><svg id="ch-spec"></svg><div class="ch-tip" hidden></div></div>
         <p class="chart-ctl">
-          <button id="c-log" type="button" aria-pressed="false">Log scale</button>
-          <button id="c-mol" type="button" aria-pressed="false" title="Where molecules absorb in cool objects">Molecules</button>
-          <a id="c-csv" href="#" download="spectrum.csv">Download CSV</a>
+          <button id="c-log" type="button" class="quiet" aria-pressed="false">Log scale</button>
+          <button id="c-mol" type="button" class="quiet" aria-pressed="false" title="Where molecules absorb in cool objects">Molecules</button>
+          <button id="c-bb" type="button" class="quiet" aria-pressed="false" title="The smooth curve a plain hot body of the fitted temperature would give">Blackbody</button>
+          <a id="c-csv" href="#" download="spectrum.csv">CSV</a>
         </p>
         <p class="small" id="spec-sum"></p>
         <div class="switch" role="tablist">
@@ -125,8 +136,8 @@ try { const t = localStorage.getItem('blink-theme'); if (t) document.querySelect
         <p class="small" id="time-sum"></p>
       </div>
     </section>
-    <section class="card" id="card-field">
-      <h2>In this field <button id="b-scan" type="button" title="Measure the motion of every bright dot and list the ones that move">Scan for movers</button></h2>
+    <section id="card-field">
+      <h2>In this field <button id="b-scan" type="button" class="quiet" title="Measure the motion of every dot in the current colour window and list the ones that move">Scan for movers</button></h2>
       <p class="small" id="field-note"></p>
       <ul class="field" id="field"></ul>
     </section>
@@ -134,8 +145,8 @@ try { const t = localStorage.getItem('blink-theme'); if (t) document.querySelect
 </main>
 
 <footer>
-  <span>Data: NASA SPHEREx spectral images (DR1 and QR3) from NASA/IPAC IRSA. Catalogues: ESA Gaia DR3, SIMBAD, CatWISE.</span>
-  <span>Built at NASA Space Apps 2026. AI assistance is disclosed in the <a href="https://github.com/shrestha-droid/blink-102#ai-use" id="readme-link">README</a>.</span>
+  <span>Data: NASA SPHEREx spectral images (DR1, QR3) via NASA/IPAC IRSA · ESA Gaia DR3 · SIMBAD · CatWISE</span>
+  <span>Built at NASA Space Apps 2026 · AI assistance disclosed in the <a href="https://github.com/shrestha-droid/blink-102#ai-use" id="readme-link">README</a></span>
 </footer>
 
 <dialog id="help" aria-labelledby="help-t" closedby="any">
@@ -148,7 +159,7 @@ try { const t = localStorage.getItem('blink-theme'); if (t) document.querySelect
     <li><b>Green rings</b> are stars already in catalogues, drawn where they should be on each date. A dot that moves with no ring is worth a second look.</li>
   </ol>
   <h3>Keys</h3>
-  <p class="keys"><kbd>Space</kbd> play or pause · <kbd>←</kbd> <kbd>→</kbd> step dates · <kbd>[</kbd> <kbd>]</kbd> narrow or widen the colour window · <kbd>1</kbd>–<kbd>6</kbd> one detector · <kbd>0</kbd> all colours · <kbd>S</kbd> sweep · <kbd>D</kbd> difference · <kbd>C</kbd> colour · <kbd>F</kbd> flags · <kbd>G</kbd> catalogue · <kbd>I</kbd> plate theme · <kbd>+</kbd> <kbd>−</kbd> zoom</p>
+  <p class="keys"><kbd>Space</kbd> play or pause · <kbd>←</kbd> <kbd>→</kbd> step dates · <kbd>[</kbd> <kbd>]</kbd> narrow or widen the colour window · <kbd>1</kbd>–<kbd>6</kbd> one detector · <kbd>0</kbd> all colours · <kbd>S</kbd> sweep · <kbd>D</kbd> difference · <kbd>C</kbd> colour · <kbd>T</kbd> follow the selected object · <kbd>A</kbd> all dates · <kbd>F</kbd> flags · <kbd>G</kbd> catalogue · <kbd>I</kbd> plate theme · <kbd>+</kbd> <kbd>−</kbd> zoom</p>
   <form method="dialog"><button autofocus>Close</button></form>
 </dialog>
 

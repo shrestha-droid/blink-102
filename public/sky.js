@@ -353,6 +353,103 @@ export function findPeaks(img, size, thresh, sep = 3, edge = 4) {
 /** Wavelength (um) of an exposure at a grid position: it changes across the field. */
 export const waveAt = (e, size, col, row) => e.wave + e.dwave_dx * (col - (size - 1) / 2) + e.dwave_dy * (row - (size - 1) / 2);
 
+// ---- deeper: following a mover, searching for faint movers, periods, and what a spectrum says ----
+
+/** An image shifted so that the value at (col + dx, row + dy) lands on (col, row). Bilinear; blank outside. */
+export function shiftImage(img, size, dx, dy) {
+  const out = new Float32Array(size * size).fill(NaN);
+  const ix = Math.floor(dx), iy = Math.floor(dy), fx = dx - ix, fy = dy - iy;
+  for (let r = 0; r < size; r++) {
+    const r0 = r + iy;
+    if (r0 < 0 || r0 + 1 >= size) continue;
+    for (let c = 0; c < size; c++) {
+      const c0 = c + ix;
+      if (c0 < 0 || c0 + 1 >= size) continue;
+      const p = r0 * size + c0;
+      out[r * size + c] = (1 - fy) * ((1 - fx) * img[p] + fx * img[p + 1]) + fy * ((1 - fx) * img[p + size] + fx * img[p + size + 1]);
+    }
+  }
+  return out;
+}
+
+/** An exposure re-centred on a moving object: shifted by (dx, dy) pixels, flags moved to the nearest pixel. */
+export function shiftExposure(e, size, dx, dy) {
+  const cat = new Uint8Array(size * size), jx = Math.round(dx), jy = Math.round(dy);
+  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) {
+    const r0 = r + jy, c0 = c + jx;
+    cat[r * size + c] = r0 < 0 || c0 < 0 || r0 >= size || c0 >= size ? 0 : e.cat[r0 * size + c0];
+  }
+  return { ...e, img: shiftImage(e.img, size, dx, dy), cat };
+}
+
+/**
+ * Lomb-Scargle periodogram for unevenly spaced brightness measurements. Returns the best period (days), its power,
+ * and the chance that noise alone would give a peak this high (from shuffling the measurements `shuffles` times).
+ */
+export function findPeriod(t, y, { pmin = 20, pmax = null, shuffles = 200 } = {}) {
+  const n = t.length, span = Math.max(...t) - Math.min(...t);
+  pmax ??= span / 1.5;                        // at least one and a half cycles must fit
+  if (n < 12 || pmax <= pmin) return null;
+  const nf = Math.min(600, Math.ceil(4 * span * (1 / pmin - 1 / pmax))), freqs = Array.from({ length: nf }, (_, i) => 1 / pmax + i * (1 / pmin - 1 / pmax) / (nf - 1));
+  const power = yy => {
+    const mean = yy.reduce((s, v) => s + v, 0) / n, d = yy.map(v => v - mean), vr = d.reduce((s, v) => s + v * v, 0) / (n - 1);
+    let best = 0, bf = freqs[0];
+    for (const f of freqs) {
+      const w = 2 * Math.PI * f;
+      let s2 = 0, c2 = 0;
+      for (const x of t) { s2 += Math.sin(2 * w * x); c2 += Math.cos(2 * w * x); }
+      const tau = Math.atan2(s2, c2) / (2 * w);
+      let cs = 0, cc = 0, ss = 0, sn = 0;
+      for (let i = 0; i < n; i++) { const a = w * (t[i] - tau), c = Math.cos(a), s = Math.sin(a); cs += d[i] * c; cc += c * c; sn += d[i] * s; ss += s * s; }
+      const p = (cs * cs / cc + sn * sn / ss) / (2 * vr);
+      if (p > best) { best = p; bf = f; }
+    }
+    return [best, bf];
+  };
+  const [p0, f0] = power(y);
+  let higher = 0, seed = 12345;
+  const rand = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;      // repeatable shuffles
+  for (let k = 0; k < shuffles; k++) {
+    const s = y.slice();
+    for (let i = n - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [s[i], s[j]] = [s[j], s[i]]; }
+    if (power(s)[0] >= p0) higher++;
+  }
+  const period = 1 / f0;
+  return { period, err: period * period / (2 * span), power: p0, chance: (higher + 1) / (shuffles + 1), cycles: span / period };
+}
+
+const planck = (um, T) => 1 / (um ** 3 * (Math.exp(14387.77 / (um * T)) - 1));      // B_nu up to a constant; wavelength in um
+
+/**
+ * What a spectrum says at a glance. `pts` = [{wave (um), flux, err}] of clean measurements.
+ * Fits a blackbody (temperature and scale) and measures how deep the water (1.4 um) and methane (3.3 um) bands are
+ * against that smooth curve. A quick look, not a classification.
+ */
+export function readSpectrum(pts) {
+  const p = pts.filter(q => q.flux === q.flux && q.err > 0);
+  if (p.length < 20 || median(p.map(q => q.flux / q.err)) < 5) return null;
+  let best = null;
+  for (let T = 400; T <= 12000; T *= 1.03) {
+    let sxy = 0, sxx = 0;
+    for (const q of p) { const b = planck(q.wave, T); sxy += b * q.flux; sxx += b * b; }
+    const a = sxy / sxx, rms = Math.sqrt(p.reduce((s, q) => s + (q.flux - a * planck(q.wave, T)) ** 2, 0) / p.length);
+    if (!best || rms < best.rms) best = { T, a, rms };
+  }
+  const level = median(p.map(q => Math.abs(q.flux))), model = w => best.a * planck(w, best.T);
+  const band = (lo, hi) => { const v = p.filter(q => q.wave >= lo && q.wave <= hi); return v.length >= 4 ? [median(v.map(q => q.flux)), 1.25 * robust(v.map(q => q.flux))[1] / Math.sqrt(v.length), median(v.map(q => q.wave))] : null; };
+  const depth = (lo, hi, c1, c2) => {            // how far the band sits below a line drawn between two continuum windows
+    const b = band(lo, hi), a = band(...c1), c = band(...c2);
+    if (!b || !a || !c) return null;
+    const cont = a[0] + (c[0] - a[0]) * (b[2] - a[2]) / (c[2] - a[2]);
+    return cont > 0 ? { depth: 1 - b[0] / cont, err: Math.hypot(b[1], a[1], c[1]) / cont } : null;
+  };
+  // methane at 3.3 um has no clean continuum on its blue side in cool objects, so compare it with the 4 um peak,
+  // allowing for the slope a blackbody of the fitted temperature would have between the two
+  const ch4 = band(3.2, 3.6), peak = band(3.9, 4.1);
+  const methane = ch4 && peak && peak[0] > 0 ? { depth: 1 - (ch4[0] / peak[0]) / (planck(ch4[2], best.T) / planck(peak[2], best.T)), err: Math.hypot(ch4[1], peak[1] * ch4[0] / peak[0]) / peak[0] } : null;
+  return { T: best.T, fit: best.rms / level, model, water: depth(1.36, 1.46, [1.24, 1.31], [1.56, 1.68]), methane };
+}
+
 // ---- self-check: `node public/sky.js` ----
 if (typeof process !== 'undefined' && process.argv[1]?.endsWith('sky.js')) {
   const near = (a, b, tol) => { if (!(Math.abs(a - b) <= tol)) throw new Error(`${a} != ${b}`); };
@@ -389,6 +486,11 @@ if (typeof process !== 'undefined' && process.argv[1]?.endsWith('sky.js')) {
   const wc = locate(sat, big, 20, 20); near(wc[0], 20.6, 0.1); near(wc[1], 19.3, 0.1); if (!wc[3]) throw new Error('wings');
   if (!aperture(sat, big, 20.6, 19.3).hole) throw new Error('hole');
   const pk = findPeaks(stack(exps, size).img, size, 1); near(pk[0][0], 10, 0); near(pk[0][1], 10, 0);
+  const sh = shiftImage(exps[0].img, size, 2, -1); near(sh[9 * size + 8], exps[0].img[8 * size + 10], 1e-6);          // value from (col+2, row-1)
+  const tt = Array.from({ length: 80 }, (_, i) => i * 6.3 + (i * 37 % 5)), per = findPeriod(tt, tt.map(x => 1 + 0.3 * Math.sin(2 * Math.PI * x / 97)));
+  near(per.period, 97, 3); if (!(per.chance < 0.02)) throw new Error('period significance');
+  const bb = Array.from({ length: 280 }, (_, i) => { const w = 0.8 + i * 0.015, f = 1e6 / (w ** 3 * (Math.exp(14387.77 / (w * 3000)) - 1)); return { wave: w, flux: f, err: f / 50 }; });
+  const rs = readSpectrum(bb); near(rs.T, 3000, 120); near(rs.methane.depth, 0, 0.05); near(rs.water.depth, 0, 0.05);
   if (planChunks(Array.from({ length: 40 }, (_, i) => ({ key: 'k' + i, det: 1 + i % 2, epoch: 0 })), 8).flat().length !== 16) throw new Error('plan');
   console.log('sky.js self-check passed');
 }

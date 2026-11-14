@@ -9,6 +9,7 @@ const probe = document.body.appendChild(Object.assign(document.createElement('i'
 const css = v => { probe.style.color = `var(${v})`; return getComputedStyle(probe).color; };      // resolved for the current theme
 const API = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? new URLSearchParams(location.search).get('api') || '' : '';   // dev only
 const PRESETS = ["Barnard's Star", 'eps Indi B', 'WISE 0855-0714', 'RW Aur', 'R Dra'];
+const PRESET_NOTE = { "Barnard's Star": 'fastest-moving star', 'eps Indi B': 'brown dwarf pair', 'WISE 0855-0714': 'coldest brown dwarf known', 'RW Aur': 'young star that dims', 'R Dra': 'pulsing red giant' };
 const PRESET_QUERY = { "Barnard's Star": "Barnard's star", 'eps Indi B': 'eps Ind B', 'WISE 0855-0714': 'WISE J085510.83-071442.5' };
 const MOLECULES = [{ x0: 1.33, x1: 1.5, label: 'H₂O' }, { x0: 1.75, x1: 2.05, label: 'H₂O' }, { x0: 3.2, x1: 3.65, label: 'CH₄' },
   { x0: 4.18, x1: 4.35, label: 'CO₂' }, { x0: 4.55, x1: 4.8, label: 'CO' }];
@@ -19,7 +20,7 @@ const S = {                      // everything the page shows is derived from th
   gen: 0, target: null, size: 64, c: null, search: null, byKey: new Map(), exps: [], failed: 0, total: 0, cached: null,
   wmin: K.WMIN, wmax: K.WMAX, frames: [], frame: 0, playing: !matchMedia('(prefers-reduced-motion: reduce)').matches, fps: 2,
   diff: false, rgb: false, flags: false, cats: true, snap: true, bright: 0, zoom: 1, vx: 32, vy: 32,
-  lim: null, sel: null, meas: [], peek: null, catalog: [], movers: [], tab: 'lc', log: false, mol: false, sweep: null,
+  lim: null, sel: null, meas: [], peek: null, catalog: [], movers: [], tab: 'lc', log: false, mol: false, bb: false, sweep: null, follow: false, merge: false,
 };
 let cacheIndex = null, dirty = false, timer = null;
 
@@ -64,8 +65,9 @@ async function go(text, { keepView = false } = {}) {
 async function loadTarget(t, keepView) {
   const gen = ++S.gen;
   Object.assign(S, { target: t, c: { ra: t.ra, dec: t.dec, size: S.size }, search: null, byKey: new Map(), exps: [], failed: 0, total: 0,
-    frames: [], frame: keepView ? S.frame : 0, sel: null, meas: [], peek: null, catalog: [], movers: [], lim: null, zoom: 1, vx: S.size / 2, vy: S.size / 2, cached: null });
+    frames: [], frame: keepView ? S.frame : 0, scanned: false, sel: null, meas: [], peek: null, catalog: [], movers: [], lim: null, zoom: 1, vx: S.size / 2, vy: S.size / 2, cached: null });
   $('#q').value = t.name || `${t.ra} ${t.dec}`;
+  for (const b of $('#presets').querySelectorAll('button')) b.setAttribute('aria-current', b.dataset.name === t.name);
   $('#load').textContent = 'Finding exposures…';
   $('#b-more').hidden = true; $('#field').replaceChildren(); $('#field-note').textContent = '';
   renderAll(); showSource(); syncUrl();
@@ -97,6 +99,7 @@ async function loadTarget(t, keepView) {
   $('#b-more').hidden = rest <= 0;
   $('#b-more').textContent = `Load every exposure (${search.n})`;
   if (params.get('sel') && !S.sel) { const [ra, dec] = params.get('sel').split(',').map(Number); selectSky(ra, dec); }
+  if (params.has('scan')) scan();
 }
 
 async function fetchChunks(chunks, gen) {
@@ -117,12 +120,12 @@ async function fetchChunks(chunks, gen) {
           S.exps.push(e);
         }
       } catch { S.failed += ch.keys?.length || 0; }
-      $('#load').textContent = `${S.exps.length} of ${S.search.n} exposures`;
+      $('#load').textContent = `${S.exps.length} of ${S.search.n} exposures`; progress((S.exps.length + S.failed) / S.total);
       invalidate();
     }
   };
   await Promise.all(Array.from({ length: 6 }, worker));     // browsers allow about six requests per host
-  if (gen === S.gen) { $('#load').textContent = ''; invalidate(); }
+  if (gen === S.gen) { $('#load').textContent = ''; progress(1); invalidate(); }
 }
 
 async function loadCatalogues(gen) {
@@ -152,6 +155,30 @@ async function loadCatalogues(gen) {
   Cat.catwise(t.ra, t.dec, half * 60 * 1.5).then(add).catch(() => {});
 }
 
+function progress(u) { const b = $('#bar'); b.style.width = `${Math.min(100, 100 * u)}%`; b.classList.toggle('done', u >= 1); }
+
+// ---------- following a mover: hold the selected object still and let the sky move ----------
+const canFollow = () => !!(S.sel && (S.sel.pmra || S.sel.pmde));
+function followShift(mjd) {         // how far (columns, rows) the selected object is from where it was when selected
+  if (!S.follow || !canFollow()) return [0, 0];
+  const a = selGrid(mjd), b = selGrid(S.sel.mjd0);
+  return [a[0] - b[0], a[1] - b[1]];
+}
+function viewExp(e) {               // the exposure as the eyepiece should show it
+  const [dx, dy] = followShift(e.mjd);
+  if (!dx && !dy) return e;
+  const id = `${S.sel.ra},${S.sel.mjd0},${S.sel.pmra},${S.sel.pmde}`;
+  if (S.fcache?.id !== id) S.fcache = { id, map: new Map() };
+  if (!S.fcache.map.has(e.key)) S.fcache.map.set(e.key, K.shiftExposure(e, S.size, dx, dy));
+  return S.fcache.map.get(e.key);
+}
+/** One plain stack per date in the colour window, never shifted or merged: what measurements are made on. */
+function rawFrames() {
+  const id = `${S.wmin},${S.wmax},${S.exps.length}`;
+  if (S.raw?.id !== id) S.raw = { id, frames: S.search.epochs.map(ep => { const ex = S.exps.filter(e => e.epoch === ep.i && inBand(e)); if (!ex.length) return null; const f = K.stack(ex, S.size); f.mjd = K.median(ex.map(e => e.mjd)); f.epoch = ep; return f; }) };
+  return S.raw.frames;
+}
+
 // ---------- frames: one stacked picture per date ----------
 const inBand = e => e.wave >= S.wmin && e.wave <= S.wmax;
 function invalidate(restack = true) {
@@ -162,15 +189,16 @@ function invalidate(restack = true) {
 function computeFrames() {
   if (!S.search) return;
   const size = S.size, thirds = [0, 1, 2].map(i => Math.exp(LN(S.wmin) + (LN(S.wmax) - LN(S.wmin)) * i / 3)).concat(S.wmax);
-  S.frames = S.search.epochs.map(ep => {
-    const ex = S.exps.filter(e => e.epoch === ep.i && inBand(e));
-    if (!ex.length) return null;
-    const f = K.stack(ex, size);
-    f.count = ex.length; f.mjd = K.median(ex.map(e => e.mjd)); f.epoch = ep;
+  const build = (list, ep) => {
+    if (!list.length) return null;
+    const ex = list.map(viewExp), f = K.stack(ex, size);
+    f.count = ex.length; f.mjd = K.median(ex.map(e => e.mjd)); f.epoch = ep; f.span = [Math.min(...ex.map(e => e.mjd)), Math.max(...ex.map(e => e.mjd))];
     if (S.rgb) f.rgb = [2, 1, 0].map(k => { const sub = ex.filter(e => e.wave >= thirds[k] && e.wave <= thirds[k + 1]); return sub.length ? K.stack(sub, size).img : null; });
     return f;
-  });
-  const live = S.frames.filter(Boolean);
+  };
+  if (S.merge) { const one = build(S.exps.filter(inBand), null); S.frames = S.search.epochs.map(() => one); }      // every date in one deep picture
+  else S.frames = S.search.epochs.map(ep => build(S.exps.filter(e => e.epoch === ep.i && inBand(e)), ep));
+  const live = [...new Set(S.frames.filter(Boolean))];
   if (!live.length) { S.lim = null; return; }
   if (S.diff) for (const f of live) {           // each date minus the average of the others
     const others = live.filter(g => g !== f);
@@ -214,7 +242,7 @@ function toScreen(col, row, W) { const v = view(); return [(col + 0.5 - v.sx) * 
 function toGridXY(x, y, W) { const v = view(); return [v.sx + x * v.sw / W - 0.5, S.size - 1 - (v.sy + y * v.sw / W - 0.5)]; }
 
 function current() {             // what the eyepiece shows: a hovered single exposure, or the current date's stack
-  if (S.peek) return { src: S.peek, mjd: S.peek.mjd, one: true };
+  if (S.peek) return { src: viewExp(S.peek), mjd: S.peek.mjd, one: true };
   const f = S.frames[S.frame];
   return f ? { src: f, mjd: f.mjd } : { src: null, mjd: S.search?.epochs[S.frame] ? (S.search.epochs[S.frame].mjd0 + S.search.epochs[S.frame].mjd1) / 2 : K.REF_MJD };
 }
@@ -230,11 +258,37 @@ function renderEye(target = $('#img'), over = $('#ovl')) {
   ctx.drawImage(off, v.sx, v.sy, v.sw, v.sw, 0, 0, W, W);
   drawOverlay(over, W, cur);
   const t = S.target, ep = S.search?.epochs[S.frame];
-  $('#hud-target').innerHTML = t ? `<b>${esc(t.name || 'Position')}</b>\n${K.sexa(t.ra, t.dec)}\n${t.ra.toFixed(5)} ${t.dec >= 0 ? '+' : ''}${t.dec.toFixed(5)}` : '';
-  $('#hud-epoch').innerHTML = !ep ? '' : cur.one ? `<b>${fmtDate(cur.mjd)}</b>\none exposure · D${cur.src.det}\n${cur.src.wave.toFixed(3)} µm`
-    : `<b>${fmtDate(cur.mjd)}</b>\n${cur.src ? `${cur.src.count} exposures stacked` : 'no exposures in this colour range'}\ndate ${S.frame + 1} of ${S.search.epochs.length}`;
-  $('#hud-wave').textContent = `${S.wmin.toFixed(2)}–${S.wmax.toFixed(2)} µm${S.diff ? '\ndifference' : S.rgb ? '\ncolour: short=blue long=red' : ''}`;
-  $('#hud-scale').textContent = `${(S.size * K.PIX / 60 / S.zoom).toFixed(1)}′ across · north up, east left`;
+  $('#hud-target').innerHTML = t ? `<b>${esc(t.name || 'Position')}</b>\n${K.sexa(t.ra, t.dec)}\n<i>${t.ra.toFixed(5)} ${t.dec >= 0 ? '+' : '−'}${Math.abs(t.dec).toFixed(5)}</i>` : '';
+  $('#hud-epoch').innerHTML = !ep ? '' : cur.one ? `<b>${fmtDate(cur.mjd)}</b>\n<i>one exposure · detector ${cur.src.det}</i>\n<i>${cur.src.wave.toFixed(3)} µm</i>`
+    : S.merge && cur.src ? `<b>All dates</b>\n<i>${cur.src.count} exposures stacked</i>\n<i>${monthYear(cur.src.span[0])} – ${monthYear(cur.src.span[1])}</i>`
+    : `<b>${fmtDate(cur.mjd)}</b>\n<i>${cur.src ? `${cur.src.count} exposures stacked` : 'no exposures in this colour range'}</i>\n<i>date ${S.frame + 1} of ${S.search.epochs.length}</i>`;
+  const mode = [S.diff && 'difference', S.rgb && 'colour: short = blue, long = red', S.follow && canFollow() && 'following the selected object'].filter(Boolean).join('\n');
+  $('#hud-wave').innerHTML = `${mode ? `<i>${mode}</i>\n` : ''}${S.wmin.toFixed(2)}–${S.wmax.toFixed(2)} µm`;
+  $('#hud-scale').innerHTML = `${(S.size * K.PIX / 60 / S.zoom).toFixed(1)}′ across\n<i>north up · east left</i>`;
+  if (target.id === 'img') renderBezel();
+}
+
+/** The bezel around the eyepiece: a ruler in arcminutes from the centre, which follows the zoom. */
+function renderBezel() {
+  const cv = $('#bezel'), W = Math.round(cv.clientWidth * devicePixelRatio);
+  if (!W) return;
+  cv.width = cv.height = W;
+  const g = cv.getContext('2d'), dpr = devicePixelRatio, bz = (W - $('#img').clientWidth * dpr) / 2, inner = W - 2 * bz, v = view();
+  const perArcmin = inner / v.sw * 60 / K.PIX, fov = v.sw * K.PIX / 60, step = fov > 9 ? 2 : fov > 3.5 ? 1 : fov > 1.6 ? 0.5 : 0.25;
+  const [cx, cy] = toScreen((S.size - 1) / 2, (S.size - 1) / 2, inner), n = Math.ceil(fov / step) + 2;
+  g.strokeStyle = css('--line2'); g.fillStyle = css('--faint'); g.lineWidth = dpr; g.font = `${9 * dpr}px "IBM Plex Mono", monospace`; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.beginPath();
+  for (let k = -n; k <= n; k++) {
+    const whole = Number.isInteger(k * step), len = (k === 0 ? 8 : whole ? 5 : 3) * dpr, x = bz + cx + k * step * perArcmin, y = bz + cy + k * step * perArcmin, lab = `${Math.abs(k * step)}′`;
+    if (x >= bz - 1 && x <= W - bz + 1) { g.moveTo(x, bz - 3 * dpr); g.lineTo(x, bz - 3 * dpr - len); g.moveTo(x, W - bz + 3 * dpr); g.lineTo(x, W - bz + 3 * dpr + len); if (k === 0) g.fillText('N', x, 5 * dpr); }
+    if (y >= bz - 1 && y <= W - bz + 1) {
+      const labelled = whole && k !== 0 && step >= 1;            // arcminutes from the centre, written on the right-hand side
+      g.moveTo(bz - 3 * dpr, y); g.lineTo(bz - 3 * dpr - len, y);
+      if (labelled) g.fillText(lab, W - bz / 2 + dpr, y); else { g.moveTo(W - bz + 3 * dpr, y); g.lineTo(W - bz + 3 * dpr + len, y); }
+      if (k === 0) g.fillText('E', 5 * dpr, y);
+    }
+  }
+  g.stroke();
 }
 
 /** Stroke the current path in the selection colour over a contrasting under-stroke, so it shows on any pixel. */
@@ -261,11 +315,11 @@ function drawOverlay(cv, W, cur) {
     }
     g.globalAlpha = 1;
   }
-  const inView = (x, y) => x > -20 && y > -20 && x < W + 20 && y < W + 20;
+  const inView = (x, y) => x > -20 && y > -20 && x < W + 20 && y < W + 20, [fx, fy] = followShift(cur.mjd);
   if (S.cats) {
     g.font = `${11 * dpr}px "IBM Plex Mono", monospace`;
     for (const o of S.catalog) {               // known objects, drawn where they should be on this date
-      const [c, r] = K.toGrid(...K.apparent(o, cur.mjd), S.c), [x, y] = toScreen(c, r, W);
+      const [c, r] = K.toGrid(...K.apparent(o, cur.mjd), S.c), [x, y] = toScreen(c - fx, r - fy, W);
       if (!inView(x, y)) continue;
       if (o.target) {                           // the named target: a dashed crosshair with a gap
         g.beginPath();
@@ -285,11 +339,11 @@ function drawOverlay(cv, W, cur) {
     g.globalAlpha = 1;
   }
   for (const m of S.movers) {                  // found by the scan
-    const dt = (cur.mjd - m.mjd0) / 365.25, [x, y] = toScreen(m.col - m.pe * dt / K.PIX, m.row + m.pn * dt / K.PIX, W);
+    const dt = (cur.mjd - m.mjd0) / 365.25, [x, y] = toScreen(m.col - m.pe * dt / K.PIX - fx, m.row + m.pn * dt / K.PIX - fy, W);
     g.strokeStyle = m.known ? css('--known') : css('--found'); g.lineWidth = 2 * dpr; g.beginPath(); g.arc(x, y, 9 * dpr, 0, 7); g.stroke(); g.lineWidth = 1.2 * dpr;
   }
   if (S.sel) {
-    const [c, r] = selGrid(cur.mjd), [x, y] = toScreen(c, r, W);
+    const [c, r] = selGrid(cur.mjd), [x, y] = toScreen(c - fx, r - fy, W);
     g.beginPath(); g.arc(x, y, 2.5 * cell, 0, 7); halo(g, dpr);
     g.strokeStyle = css('--sel');
     if (cur.one) { g.globalAlpha = 0.45; g.setLineDash([3 * dpr, 3 * dpr]); for (const rr of [5, 8]) { g.beginPath(); g.arc(x, y, rr * cell, 0, 7); g.stroke(); } g.setLineDash([]); g.globalAlpha = 1; }
@@ -308,10 +362,16 @@ function buildPlates() {
     b.onmouseenter = () => { if (S.playing) return; S.hoverFrame = S.frame; S.frame = i; renderEye(); };
     b.onmouseleave = () => { if (S.hoverFrame != null && !S.playing) { S.frame = S.hoverFrame; renderEye(); } S.hoverFrame = null; };
     box.append(b);
+    const next = S.search.epochs[i + 1];
+    if (next) {                  // how long passed between this date and the next
+      const d = next.mjd0 - ep.mjd1, g = document.createElement('i');
+      g.className = 'gap'; g.innerHTML = S.search.epochs.length <= 7 ? `<span>${d >= 45 ? `${Math.round(d / 30.44)} months` : `${Math.round(d)} days`}</span>` : '';
+      box.append(g);
+    }
   });
 }
 function renderPlates() {
-  [...$('#plates').children].forEach((b, i) => {
+  [...$('#plates').querySelectorAll('.plate')].forEach((b, i) => {
     const f = S.frames[i];
     b.setAttribute('aria-selected', i === S.frame);
     b.classList.toggle('empty', !f);
@@ -327,7 +387,7 @@ function buildStrip() {
   K.DET.forEach(([a, b], i) => {
     const s = document.createElement('button');
     s.type = 'button'; s.className = 'seg'; s.style.cssText = `left:${wx(a) * 100}%;width:${(wx(b) - wx(a)) * 100}%;background:var(--d${i + 1})`;
-    s.innerHTML = `D${i + 1}<small>${a.toFixed(2)}–${b.toFixed(2)}</small>`;
+    s.textContent = `D${i + 1}`;
     s.title = `Detector ${i + 1}: ${a.toFixed(2)} to ${b.toFixed(2)} µm`;
     s.onclick = () => setWindow(a, b);
     $('#segs').append(s);
@@ -357,7 +417,7 @@ function buildStrip() {
 function setWindow(a, b, sync = true) {
   S.wmin = Math.max(K.WMIN, Math.min(a, b)); S.wmax = Math.min(K.WMAX, Math.max(a, b));
   dirty = true; computeFrames(); dirty = false;
-  if (S.sel) { S.fit = fitMotion(); drawTimeChart(); }
+  if (S.sel) { S.fit = fitMotion(); S.lc = lightCurve(); drawTimeChart(); drawStats(); }
   renderAll();
   if (sync) syncUrl();
 }
@@ -365,10 +425,13 @@ function renderStrip() {
   const win = $('#win'), cv = $('#strip-ticks');
   win.style.left = `${wx(S.wmin) * 100}%`; win.style.width = `${(wx(S.wmax) - wx(S.wmin)) * 100}%`;
   $('#h0').setAttribute('aria-valuetext', `${S.wmin.toFixed(2)} micrometres`); $('#h1').setAttribute('aria-valuetext', `${S.wmax.toFixed(2)} micrometres`);
-  cv.width = cv.clientWidth * devicePixelRatio; cv.height = 12 * devicePixelRatio;
-  const g = cv.getContext('2d');
-  g.fillStyle = css('--bg'); g.globalAlpha = 0.75;
-  for (const e of S.exps) g.fillRect(Math.round(wx(e.wave) * cv.width), 0, Math.max(1, devicePixelRatio), cv.height);   // where data exists
+  const dpr = devicePixelRatio, W = cv.width = Math.round(cv.clientWidth * dpr); cv.height = 30 * dpr;
+  const g = cv.getContext('2d'), inN = S.exps.filter(inBand).length;
+  g.fillStyle = css('--ink');
+  for (const e of S.exps) { g.globalAlpha = inBand(e) ? 0.85 : 0.28; g.fillRect(Math.round(wx(e.wave) * (W - dpr)), 3 * dpr, dpr, 7 * dpr); }      // one tick per exposure: where data exists
+  g.globalAlpha = 1; g.fillStyle = css('--faint'); g.font = `${9 * dpr}px "IBM Plex Mono", monospace`; g.textBaseline = 'top';
+  for (const w of [0.75, 1, 1.5, 2, 2.5, 3, 4, 5]) { const x = Math.round(wx(w) * (W - dpr)); g.fillRect(x, 13 * dpr, dpr, 4 * dpr); g.textAlign = w === 0.75 ? 'left' : w === 5 ? 'right' : 'center'; g.fillText(w === 5 ? '5 µm' : String(w), x, 19 * dpr); }
+  $('#strip-read').innerHTML = `<b>${S.wmin.toFixed(2)}–${S.wmax.toFixed(2)} µm</b>${S.exps.length ? ` · ${inN} of ${S.exps.length} exposures in this window` : ''}`;
 }
 function stopSweep() { if (S.sweep) { cancelAnimationFrame(S.sweep); S.sweep = null; $('#b-sweep').setAttribute('aria-pressed', false); } }
 function sweep() {                 // slide a narrow window from 0.75 to 5.0 um
@@ -423,7 +486,7 @@ function selectGrid(col, row) {
     const ce = K.locate({ img: f.img, cat: f.left.map(v => (v > 128 ? 4 : 0)), noise: S.lim.sig }, S.size, bc, br);
     [col, row] = ce ? ce : [bc, br];
   }
-  const [ra, dec] = K.fromGrid(col, row, S.c);
+  const [fx, fy] = followShift(f.mjd), [ra, dec] = K.fromGrid(col + fx, row + fy, S.c);      // back to true sky coordinates
   selectSky(ra, dec, f.mjd);
 }
 
@@ -437,7 +500,8 @@ function selectSky(ra, dec, mjd = S.frames[S.frame]?.mjd || K.REF_MJD, forced = 
   }
   if (match && match.src !== 'CatWISE') [ra, dec] = K.apparent(match, mjd);      // a catalogue position is better than a centre found by eye, above all for saturated stars
   S.sel = { ra, dec, mjd0: mjd, pmra: match?.pmra || 0, pmde: match?.pmde || 0, plx: match?.plx > 0 ? match.plx : 0, match, measuredPm: false };
-  measure(); syncUrl(); renderEye();
+  measure(); syncUrl();
+  if (S.follow) { computeFrames(); renderAll(); } else renderEye();
 }
 
 function measure() {
@@ -464,7 +528,7 @@ function fitMotion() {
   const inWin = S.meas.filter(m => m.wave >= S.wmin && m.wave <= S.wmax);
   let pts = inWin.filter(m => m.cen && m.cen[2] > 10), stacked = false;     // the line fit clips the odd bad one
   if (pts.length < 8 || pts.length < 0.5 * inWin.length) {          // too faint in single exposures: use its centre of light in each date's stack instead
-    pts = S.frames.filter(Boolean).map(f => {
+    pts = rawFrames().filter(Boolean).map(f => {
       const fake = { img: f.img, cat: new Uint8Array(S.size * S.size), noise: S.lim.sig, mjd: f.mjd, epoch: f.epoch.i };
       const cen = K.centroid(fake, S.size, ...selGrid(f.mjd));
       return cen && cen[2] > 4 ? { e: fake, cen } : null;
@@ -479,7 +543,7 @@ function fitMotion() {
   const fe = K.lineFit(t, east), fn = K.lineFit(t, north);
   if (!fe || !fn) return null;
   if (stacked) {                 // three or four points cannot show their own scatter: add the position error a faint dot really has
-    const extra = K.PIX * 1.5 / Math.min(...pts.map(m => m.cen[2])) / Math.max(0.2, Math.max(...t) - Math.min(...t));
+    const extra = K.PIX / Math.min(...pts.map(m => m.cen[2])) / Math.max(0.2, Math.max(...t) - Math.min(...t));
     fe.eb = Math.hypot(fe.eb, extra); fn.eb = Math.hypot(fn.eb, extra);
   }
   return { pts, t, east, north, fe, fn, stacked, pe: fe.b, pn: fn.b, total: Math.hypot(fe.b, fn.b), err: Math.hypot(fe.eb, fn.eb), pa: (Math.atan2(fe.b, fn.b) * 180 / Math.PI + 360) % 360 };
@@ -500,7 +564,32 @@ function showSource() {
   else if (S.meas.length - good.length) badges.push(['', `${S.meas.length - good.length} of ${S.meas.length} exposures flagged`]);
   if (s.measuredPm) badges.push(['found', 'following its measured motion']);
   $('#src-badges').innerHTML = badges.map(([c, t]) => `<span class="badge ${c}">${esc(t)}</span>`).join('');
-  drawSpectrum(); drawTimeChart();
+  S.lc = lightCurve(); drawSpectrum(); drawTimeChart(); drawStats();
+}
+
+/** Four numbers that sum the source up: how bright, how fast, how variable, and what its spectrum says. */
+function drawStats() {
+  const s = S.sel, f = S.fit, lc = S.lc, rd = S.read, pk = S.peak, cells = [];
+  cells.push(['Peak flux', pk ? `${pk.val}<small>${pk.unit}</small>` : '—', pk ? `AB ${pk.ab} near ${pk.wave} µm${s.saturated ? ' (lower limit)' : ''}` : 'core saturated in every exposure']);
+  const cpm = s.match ? totalPm(s.match) : 0;
+  cells.push(['Motion', f ? `${f.total.toFixed(2)}<small>″/yr</small>` : '—', !f ? 'too faint to track' : f.total < 4 * f.err ? `± ${f.err.toFixed(2)}: not significant` : `± ${f.err.toFixed(2)}${cpm > 0.05 ? ` · catalogue ${cpm.toFixed(2)}` : ''}`]);
+  cells.push(['Varies', lc.means.length > 1 ? `${lc.mag.toFixed(2)}<small>mag</small>` : '—', lc.period ? `repeats every ${lc.period.period.toFixed(0)} ± ${lc.period.err.toFixed(0)} days` : lc.means.length > 1 ? `across ${lc.means.length} dates` : 'not enough dates']);
+  const sig = d => d && d.depth > 0.25 && d.depth > 3 * d.err;
+  cells.push(['Spectrum', !rd ? '—' : sig(rd.methane) ? `CH₄<small>${Math.round(100 * rd.methane.depth)} % deep</small>` : sig(rd.water) ? `H₂O<small>${Math.round(100 * rd.water.depth)} % deep</small>` : rd.fit < 0.25 ? `${rd.T >= 7000 ? '> 7000' : Math.round(rd.T / 100) * 100}<small>K</small>` : '—',
+    !rd ? (s.saturated ? 'too bright to read' : 'too faint to read') : sig(rd.methane) ? 'methane: the mark of a T-type brown dwarf' : sig(rd.water) ? 'water vapour: a cool atmosphere' : rd.fit < 0.25 ? 'smooth, like a plain hot body' : 'not a plain hot body']);
+  $('#stats').innerHTML = cells.map(([k, v, sub]) => `<div><dt>${k}</dt><dd>${v}</dd><dd>${esc(sub)}</dd></div>`).join('');
+}
+
+/** Brightness over time: each measurement divided by the source's own typical brightness at that wavelength, so every
+ *  colour in the window counts toward one curve. Saturated stars use their unsaturated outer light. */
+function lightCurve() {
+  const s = S.sel, val = s.saturated ? m => m.wing : m => (m.flagged ? NaN : m.flux), spec = medianSpectrum(val);
+  const pts = S.meas.filter(m => (s.saturated || !m.flagged) && m.wave >= S.wmin && m.wave <= S.wmax).map(m => ({ m, rel: val(m) / spec.at(m.wave) })).filter(p => isFinite(p.rel) && spec.at(p.m.wave) > 0);
+  const means = S.search.epochs.map(ep => { const v = pts.filter(p => p.m.e.epoch === ep.i); return v.length >= 3 ? [K.median(v.map(p => p.m.e.mjd)), K.median(v.map(p => p.rel))] : null; }).filter(Boolean);
+  const lo = Math.min(...means.map(p => p[1])), hi = Math.max(...means.map(p => p[1]));
+  // a period needs many dates: three passes can always be joined by a sine curve
+  const clean = pts.filter(p => p.rel > 0 && p.rel < 5), per = means.length >= 6 ? K.findPeriod(clean.map(p => p.m.e.mjd), clean.map(p => p.rel)) : null;
+  return { pts, means, lo, hi, mag: means.length > 1 ? 2.5 * Math.log10(hi / lo) : 0, period: per && per.chance < 0.011 && per.cycles >= 1.5 ? per : null };
 }
 
 /** The source's own typical brightness at each wavelength: medians in log-spaced bins (fewer, wider bins when faint). */
@@ -526,11 +615,15 @@ function drawSpectrum() {
   const big = Math.max(...spec.med.filter(isFinite), 0) > 20000, u = big ? 1000 : 1, unit = big ? 'mJy' : 'µJy', dp = big ? 1 : 0;
   const line = spec.med.map((v, i) => [xw((i + 0.5) / spec.n), v / u]).filter(p => isFinite(p[1]));
   const good = usable.filter(m => !m.flagged);
+  S.read = sat ? null : K.readSpectrum(good.map(m => ({ wave: m.wave, flux: m.flux, err: m.err })));
+  const pk = line.reduce((a, b) => (b[1] > a[1] ? b : a), [0, -Infinity]);
+  S.peak = line.length ? { val: pk[1].toFixed(dp), unit, ab: K.abMag(pk[1] * u).toFixed(1), wave: pk[0].toFixed(2) } : null;
+  const bbLine = S.bb && S.read ? [{ pts: Array.from({ length: 80 }, (_, i) => { const w = 0.75 + i * 4.25 / 79; return [w, S.read.model(w) / u]; }), color: css('--mute'), dash: '3 3', label: `${Math.round(S.read.T / 100) * 100} K blackbody` }] : [];
   scatter($('#ch-spec'), {
     empty: 'Core saturated in every exposure: no spectrum',
     points: (line.length ? usable : []).map(m => ({ x: m.wave, y: m.flux / u, e: m.err / u, color: epochColor(m.e.epoch), hollow: m.flagged || m.sat, data: m,
       tip: `${m.wave.toFixed(3)} µm · ${fmtDate(m.e.mjd)}\n${(m.flux / u).toFixed(dp)} ± ${(m.err / u).toFixed(dp)} ${unit}${m.flux > 0 ? ` (AB ${K.abMag(m.flux).toFixed(2)})` : ''}${m.flagged ? '\nflagged pixel in aperture' : m.sat ? '\nnear saturation' : ''}` })),
-    lines: [{ pts: line, color: css('--sel'), width: 1.5 }],
+    lines: [...bbLine, { pts: line, color: css('--sel'), width: 1.5 }],
     bands: K.DET.map(([x0, x1], i) => ({ x0, x1, color: detColor(i + 1) })),
     marks: S.mol ? MOLECULES : [], xdom: [0.7, 5.1], xticks: [1, 2, 3, 4, 5], ylog: S.log,
     ydom: calmRange((good.length >= 5 ? good : usable).map(m => m.flux / u)),
@@ -572,68 +665,94 @@ function drawTimeChart() {
       (s.plx > 0 ? ` Its parallax (${(s.plx / 1000).toFixed(2)}″, from the catalogue) is removed.` : '') + (s.saturated ? ' Located from the star’s outer light, which is less precise.' : '') + ' Filled = north, hollow = east.';
     return;
   }
-  // brightness over time: each point divided by the source's own typical brightness at that wavelength,
-  // so all colours in the window count toward one curve. Saturated stars use their unsaturated outer light.
-  const val = s.saturated ? m => m.wing : m => (m.flagged ? NaN : m.flux), spec = medianSpectrum(val);
-  const pts = S.meas.filter(m => (s.saturated || !m.flagged) && m.wave >= S.wmin && m.wave <= S.wmax).map(m => ({ m, rel: val(m) / spec.at(m.wave) })).filter(p => isFinite(p.rel) && spec.at(p.m.wave) > 0);
-  const means = S.search.epochs.map(ep => { const v = pts.filter(p => p.m.e.epoch === ep.i); return v.length >= 3 ? [K.median(v.map(p => p.m.e.mjd)), K.median(v.map(p => p.rel))] : null; }).filter(Boolean);
+  const { pts, means, lo, hi, mag, period } = S.lc;
   scatter($('#ch-time'), {
     points: pts.map(p => ({ x: p.m.e.mjd, y: p.rel, color: epochColor(p.m.e.epoch), tip: `${fmtDate(p.m.e.mjd)} · ${p.m.wave.toFixed(2)} µm\n${p.rel.toFixed(2)} × its average` })),
-    lines: [{ pts: means, color: css('--sel'), width: 1.5 }], xlabel: 'date', ylabel: 'brightness ÷ own average', xfmt,
+    lines: [{ pts: means, color: css('--sel'), width: 1.5 }], xlabel: 'date', ylabel: 'brightness ÷ average', xfmt,
     ydom: pts.length ? calmRange(pts.map(p => p.rel).concat(2)) : undefined,
     summary: `Brightness over time from ${pts.length} measurements.`,
   });
-  const lo = Math.min(...means.map(p => p[1])), hi = Math.max(...means.map(p => p[1]));
   $('#time-sum').textContent = !means.length ? 'Not enough clean measurements in this colour range.' :
-    `Per-date medians range from ${lo.toFixed(2)} to ${hi.toFixed(2)} × the average` + (means.length > 1 ? ` (${(2.5 * Math.log10(hi / lo)).toFixed(2)} mag).` : '.') +
+    `Per-date medians range from ${lo.toFixed(2)} to ${hi.toFixed(2)} × the average` + (means.length > 1 ? ` (${mag.toFixed(2)} mag).` : '.') +
+    (period ? ` The changes repeat every ${period.period.toFixed(0)} ± ${period.err.toFixed(0)} days (${period.cycles.toFixed(1)} cycles seen; noise alone would do this less than ${Math.max(1, Math.round(100 * period.chance))} time in 100).` : '') +
     (s.saturated ? ' Measured from the star’s unsaturated outer light (ring 25–49″), because its core is saturated.' : '') + ' Each point is divided by this source’s own spectrum, so every colour in the window counts.';
 }
 
 // ---------- the field list and the motion scan ----------
+/** Which catalogue object, if any, each scanned mover is. Redone whenever a catalogue arrives. */
+function matchMovers() {
+  for (const m of S.movers) m.known = S.catalog.filter(o => o.src !== 'CatWISE' || totalPm(o) * 1000 > 5 * o.epm)
+    .map(o => ({ o, d: Math.hypot(...K.toGrid(...K.apparent(o, m.mjd0), S.c).map((v, k) => v - [m.col, m.row][k])) - (o.target ? 1 : 0) })).filter(x => x.d < 1.8).sort((a, b) => a.d - b.d)[0]?.o;
+}
+
 function buildField() {
   const half = (S.size - 1) / 2;
+  matchMovers();
   const items = S.catalog.filter(o => o.src === 'SIMBAD' || o.target).map(o => ({ o, g: K.toGrid(...K.propagate(o, K.REF_MJD), S.c) }))
     .filter(x => Math.abs(x.g[0] - half) < half && Math.abs(x.g[1] - half) < half).sort((a, b) => totalPm(b.o) - totalPm(a.o)).slice(0, 40);
   const li = (cls, name, meta, on) => { const e = document.createElement('li'); e.innerHTML = `<span class="dot ${cls}"></span><span>${esc(name)}</span><span class="m">${esc(meta)}</span>`; e.onclick = on; return e; };
   $('#field').replaceChildren(
-    ...S.movers.map(m => li(m.known ? '' : 'found', m.known ? m.known.name : 'Uncatalogued mover', `measured ${m.total.toFixed(2)} ± ${m.err.toFixed(2)}″/yr${m.known ? ` · catalogue ${totalPm(m.known).toFixed(2)}` : ''}`, () => { const [ra, dec] = K.fromGrid(m.col, m.row, S.c); selectSky(ra, dec, m.mjd0); })),
+    ...S.movers.map(m => li(m.known ? '' : 'found', m.known ? m.known.name : 'Uncatalogued mover', `${m.total.toFixed(2)} ± ${m.err.toFixed(2)}″/yr${m.stacked ? ' (stacked dates)' : ''}${m.known ? ` · catalogue ${totalPm(m.known).toFixed(2)}` : ''}`, () => { const [ra, dec] = K.fromGrid(m.col, m.row, S.c); selectSky(ra, dec, m.mjd0); })),
     ...items.map(({ o }) => li('', o.name, `${o.type || ''}${totalPm(o) > 0.05 ? ` · ${totalPm(o).toFixed(2)}″/yr` : ''}`, () => { const [ra, dec] = K.apparent(o, S.frames[S.frame]?.mjd || K.REF_MJD); selectSky(ra, dec, undefined, o); })));
-  if (!S.movers.length) $('#field-note').textContent = items.length ? 'Named objects in view, fastest first. Click one to measure it.' : '';
+  if (!S.scanned) $('#field-note').textContent = items.length ? 'Named objects in view, fastest first. Click one to measure it.' : '';
 }
 
-async function scan() {             // measure the motion of every bright dot; list the ones that move
-  const gen = S.gen, size = S.size, btn = $('#b-scan');
-  if (S.exps.length < 20) return;
-  btn.disabled = true; S.movers = [];
-  const all = K.stack(S.exps, size), [med, sig] = K.robust(all.img);
-  const peaks = K.findPeaks(all.img, size, med + 15 * sig, 3, 5).slice(0, 150), mid = (size - 1) / 2, mjd0 = K.median(S.exps.map(e => e.mjd));
+async function scan() {             // measure the motion of every dot in the colour window; list the ones that move
+  const gen = S.gen, size = S.size, btn = $('#b-scan'), exps = S.exps.filter(inBand), dates = rawFrames().filter(Boolean);
+  if (exps.length < 12) return;
+  btn.disabled = true; S.movers = []; S.scanned = true;
+  for (const f of dates) f.sig ??= K.robust(f.img)[1];
+  const all = K.stack(exps, size), [med, sig] = K.robust(all.img), mid = (size - 1) / 2, mjd0 = K.median(exps.map(e => e.mjd));
+  const peaks = K.findPeaks(all.img, size, med + 8 * sig, 3, 5).slice(0, 200);
+  let faint = 0;
   for (let i = 0; i < peaks.length; i++) {
     if (i % 8 === 0) { $('#field-note').textContent = `Scanning ${i + 1} of ${peaks.length} sources…`; await new Promise(requestAnimationFrame); if (gen !== S.gen) return; }
     const [pc, pr] = peaks[i];
     const track = (pe, pn, c0, r0) => {         // centre of light in every exposure, starting from where a mover would be
       const t = [], east = [], north = [];
-      for (const e of S.exps) {
+      for (const e of exps) {
         const dt = (e.mjd - mjd0) / 365.25, c = K.locate(e, size, c0 - pe * dt / K.PIX, r0 + pn * dt / K.PIX);
         if (c && c[2] > 10) { t.push(dt); east.push((mid - c[0]) * K.PIX); north.push((c[1] - mid) * K.PIX); }
       }
       return [K.lineFit(t, east), K.lineFit(t, north)];
     };
-    let [fe, fn] = track(0, 0, pc, pr);
-    if (!fe || !fn || fe.n < 15) continue;
-    if (Math.hypot(fe.b, fn.b) < 0.3 || Math.hypot(fe.b, fn.b) < 6 * Math.hypot(fe.eb, fn.eb)) continue;
-    const again = track(fe.b, fn.b, mid - fe.a / K.PIX, mid + fn.a / K.PIX);      // follow the first estimate and measure again
-    if (again[0] && again[1]) [fe, fn] = again;
+    let [fe, fn] = track(0, 0, pc, pr), stacked = false, limit = 6, least = 0.3;
+    const trackDates = (pe, pn, c0, r0) => {    // the same, through the per-date stacks, for dots too faint for single exposures
+      const t = [], east = [], north = [], snr = [];
+      for (const f of dates) {
+        const dt = (f.mjd - mjd0) / 365.25, c = K.centroid({ img: f.img, cat: new Uint8Array(size * size), noise: f.sig }, size, c0 - pe * dt / K.PIX, r0 + pn * dt / K.PIX, 2.5);
+        if (c && c[2] > 3.5) { t.push(dt); east.push((mid - c[0]) * K.PIX); north.push((c[1] - mid) * K.PIX); snr.push(c[2]); }
+      }
+      const fe = K.lineFit(t, east), fn = K.lineFit(t, north);
+      if (!fe || !fn) return [null, null];
+      const extra = K.PIX / Math.min(...snr) / Math.max(0.2, Math.max(...t) - Math.min(...t));      // the position error a faint dot really has
+      fe.eb = Math.hypot(fe.eb, extra); fn.eb = Math.hypot(fn.eb, extra);
+      return [fe, fn];
+    };
+    if (!fe || !fn || fe.n < Math.max(15, 0.5 * exps.length)) {              // not clearly seen in most single exposures: too faint for them
+      if (dates.length < 3) continue;
+      [fe, fn] = trackDates(0, 0, pc, pr);
+      if (!fe || !fn) continue;
+      stacked = true; limit = 4.5; least = 1; faint++;
+      for (let k = 0; k < 2; k++) {             // a mover drifts out of a fixed window: follow the estimate and measure again
+        const again = trackDates(fe.b, fn.b, mid - fe.a / K.PIX, mid + fn.a / K.PIX);
+        if (again[0] && again[1]) [fe, fn] = again;
+      }
+    }
+    if (Math.hypot(fe.b, fn.b) < least || Math.hypot(fe.b, fn.b) < limit * Math.hypot(fe.eb, fn.eb)) continue;
+    if (!stacked) { const again = track(fe.b, fn.b, mid - fe.a / K.PIX, mid + fn.a / K.PIX); if (again[0] && again[1]) [fe, fn] = again; }      // follow the first estimate and measure again
     const total = Math.hypot(fe.b, fn.b), err = Math.hypot(fe.eb, fn.eb);
-    if (total < 0.3 || total < 6 * err) continue;
+    if (total < least || total < limit * err) continue;
     const col = mid - fe.a / K.PIX, row = mid + fn.a / K.PIX;
-    const known = S.catalog.filter(o => o.src !== 'CatWISE').map(o => ({ o, d: Math.hypot(...K.toGrid(...K.apparent(o, mjd0), S.c).map((v, k) => v - [col, row][k])) })).filter(x => x.d < 1.8).sort((a, b) => a.d - b.d)[0]?.o;
-    S.movers.push({ col, row, pe: fe.b, pn: fn.b, total, err, mjd0, known });
+    S.movers.push({ col, row, pe: fe.b, pn: fn.b, total, err, mjd0, stacked });
   }
   S.movers.sort((a, b) => b.total - a.total);
   btn.disabled = false;
+  matchMovers();
   const fresh = S.movers.filter(m => !m.known).length;
-  $('#field-note').textContent = `${peaks.length} sources measured. ${S.movers.length} move${S.movers.length === 1 ? 's' : ''} faster than 0.3″ per year` +
-    (S.movers.length ? `; ${fresh} ${fresh === 1 ? 'is' : 'are'} not in Gaia or SIMBAD.` : '.') + (S.movers.length ? ' A star beside a bright mover can be dragged along by its glow: compare with the catalogue value, and check with the flags overlay.' : '');
+  $('#field-note').textContent = `${peaks.length} sources measured at ${S.wmin.toFixed(2)}–${S.wmax.toFixed(2)} µm (${faint} too faint for single exposures, followed through the stacked dates). ` +
+    `${S.movers.length} move${S.movers.length === 1 ? 's' : ''}` + (S.movers.length ? `; ${fresh} ${fresh === 1 ? 'is' : 'are'} not in a catalogue.` : '.') +
+    (S.movers.length ? ' A star beside a bright mover can be dragged along by its glow: compare with the catalogue value, and check with the flags overlay.' : '');
   buildField(); renderEye();
 }
 
@@ -748,11 +867,16 @@ const keys = {};
 function init() {
   if (params.has('embed')) document.body.classList.add('embed');
   buildStrip();
-  for (const name of PRESETS) { const b = document.createElement('button'); b.type = 'button'; b.textContent = name; b.onclick = () => go(name); $('#presets').append(b); }
+  for (const name of PRESETS) { const b = document.createElement('button'); b.type = 'button'; b.innerHTML = `${esc(name)}<small>${PRESET_NOTE[name]}</small>`; b.dataset.name = name; b.onclick = () => go(name); $('#presets').append(b); }
   $('#search').onsubmit = ev => { ev.preventDefault(); go($('#q').value); };
   const restack = () => { computeFrames(); renderAll(); syncUrl(); };
   keys.d = toggle('#t-diff', 'diff', () => { if (S.diff && S.rgb) { S.rgb = false; $('#t-rgb').setAttribute('aria-pressed', false); } restack(); });
   keys.c = toggle('#t-rgb', 'rgb', () => { if (S.rgb && S.diff) { S.diff = false; $('#t-diff').setAttribute('aria-pressed', false); } restack(); });
+  keys.t = toggle('#t-follow', 'follow', () => {
+    if (S.follow && !canFollow()) { S.follow = false; $('#t-follow').setAttribute('aria-pressed', false); return notice('Follow needs a selected object that moves. Click one first: a ring with a name, or anything the scan lists.'); }
+    restack();
+  });
+  keys.a = toggle('#t-all', 'merge', () => { if (S.merge) setPlaying(false); restack(); });
   keys.f = toggle('#t-flags', 'flags', renderEye);
   keys.g = toggle('#t-cat', 'cats', renderEye);
   toggle('#t-snap', 'snap');
@@ -788,6 +912,7 @@ function init() {
   drawer('#b-film', '#film', renderFilm); drawer('#b-wide', '#wide', wider);
   $('#c-log').onclick = () => { S.log = !S.log; $('#c-log').setAttribute('aria-pressed', S.log); drawSpectrum(); };
   $('#c-mol').onclick = () => { S.mol = !S.mol; $('#c-mol').setAttribute('aria-pressed', S.mol); drawSpectrum(); };
+  $('#c-bb').onclick = () => { S.bb = !S.bb; $('#c-bb').setAttribute('aria-pressed', S.bb); drawSpectrum(); };
   for (const [id, tab] of [['#s-lc', 'lc'], ['#s-pm', 'pm']]) $(id).onclick = () => { S.tab = tab; $('#s-lc').setAttribute('aria-selected', tab === 'lc'); $('#s-pm').setAttribute('aria-selected', tab === 'pm'); drawTimeChart(); };
 
   // the eyepiece: click to select, wheel to zoom, drag to pan
@@ -807,10 +932,8 @@ function init() {
   eye.addEventListener('wheel', ev => { ev.preventDefault(); const r = eye.getBoundingClientRect(); zoom(ev.deltaY < 0 ? 1.2 : 1 / 1.2, (ev.clientX - r.left) / r.width, (ev.clientY - r.top) / r.height); }, { passive: false });
   new ResizeObserver(() => renderAll()).observe(eye);
 
-  try { if (!localStorage.getItem('blink-coach') && !params.has('embed')) $('#coach').hidden = false; } catch {}
-  $('#coach-ok').onclick = () => { $('#coach').hidden = true; try { localStorage.setItem('blink-coach', '1'); } catch {} };
 }
-function buildPlatesColors() { [...$('#plates').children].forEach((b, i) => b.style.setProperty('--pc', epochColor(i))); }
+function buildPlatesColors() { [...$('#plates').querySelectorAll('.plate')].forEach((b, i) => b.style.setProperty('--pc', epochColor(i))); }
 
 async function start() {
   init();
