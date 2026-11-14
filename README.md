@@ -2,6 +2,8 @@
 
 **Pluto was found by blinking two photographs. This blinks the infrared sky in 102 colours.**
 
+*"Blink 102" and the Pluto line above are placeholders: a working title and tagline the team will confirm or replace before submitting.*
+
 Live: **https://blink-102.vercel.app**
 
 Built during NASA Space Apps Challenge 2026 (14–15 November 2026) for the challenge **"Planet X and SPHEREx"**.
