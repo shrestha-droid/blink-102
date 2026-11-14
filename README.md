@@ -86,7 +86,7 @@ Deploys to Vercel as static files plus three Python functions (`vercel.json`).
 - SPHEREx Level-2 spectral images, Data Release 1 (DOI 10.26131/IRSA678) and Quick Release 3 (DOI 10.26131/IRSA662), from NASA/IPAC Infrared Science Archive (IRSA), read from the SPHEREx bucket on AWS Open Data (`nasa-irsa-spherex`).
 - IRSA Simple Image Access and Table Access services.
 - CatWISE 2020 catalogue (Marocco et al. 2021), from NASA's WISE mission, via IRSA.
-- AllWISE and 2MASS sky images and the AllWISE catalogue (in the "Wider sky" panel).
+- AllWISE, 2MASS and DSS2 sky images (HiPS) served by IRSA, in the "Wider sky" panel.
 
 **Space agency partner data**
 
@@ -103,7 +103,7 @@ Deploys to Vercel as static files plus three Python functions (`vercel.json`).
 - Rustamkulov et al. 2026, "SPHEREx 0.75 to 5 µm Spectra for a Sequence of Nearby Brown Dwarfs", arXiv:2607.00543 (the molecule bands marked on the spectrum, and the WISE 0855 comparison).
 - IRSA SPHEREx tutorial notebooks, https://caltech-ipac.github.io/irsa-tutorials (BSD-3).
 - WiseView (Caselden et al. 2018, ascl:1806.004), the tool the challenge names as a model.
-- Software: Astropy, NumPy, SciPy (Python); Aladin Lite v3 (Bonnarel et al. 2000; Boch & Fernique 2014), loaded from CDS for the "Wider sky" panel. No JavaScript libraries are bundled.
+- Software: Astropy, NumPy, SciPy (Python); Aladin Lite v3.8.2 (CDS, Strasbourg; Boch & Fernique 2014; LGPL-3), loaded from the jsDelivr CDN only when the "Wider sky" panel is opened. No other JavaScript libraries are used.
 - Fonts: IBM Plex Sans, Mono and Serif (SIL Open Font License), from Google Fonts.
 - Hosting: Vercel.
 

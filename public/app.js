@@ -417,7 +417,8 @@ function selectGrid(col, row) {
       const v = f.img[r * S.size + c];
       if (v > best) { best = v; bc = c; br = r; }
     }
-    const ce = K.centroid({ img: f.img, cat: new Uint8Array(S.size * S.size), noise: S.lim.sig }, S.size, bc, br);
+    // pixels that most exposures left out (a saturated core) are marked, so such a star is centred from its outer light
+    const ce = K.locate({ img: f.img, cat: f.left.map(v => (v > 128 ? 4 : 0)), noise: S.lim.sig }, S.size, bc, br);
     [col, row] = ce ? ce : [bc, br];
   }
   const [ra, dec] = K.fromGrid(col, row, S.c);
@@ -429,9 +430,10 @@ function selectSky(ra, dec, mjd = S.frames[S.frame]?.mjd || K.REF_MJD, forced = 
   const [col, row] = K.toGrid(ra, dec, S.c), earth = S.search?.epochs[S.frame]?.earth;
   let match = forced, md = 1.5;
   if (!match) for (const o of S.catalog) {
-    const [c, r] = K.toGrid(...K.propagate(o, mjd, earth), S.c), d = Math.hypot(c - col, r - row) - (o.target ? 0.6 : o.src === 'SIMBAD' ? 0.3 : 0);
+    const [c, r] = K.toGrid(...K.propagate(o, mjd, earth), S.c), d = Math.hypot(c - col, r - row) - (o.target ? 1.5 : o.src === 'SIMBAD' ? 0.3 : 0);     // the named target wins a near tie
     if (d < md) { md = d; match = o; }
   }
+  if (match && match.src !== 'CatWISE') [ra, dec] = K.propagate(match, mjd);      // a catalogue position is better than a centre found by eye, above all for saturated stars
   S.sel = { ra, dec, mjd0: mjd, pmra: match?.pmra || 0, pmde: match?.pmde || 0, match, measuredPm: false };
   measure(); syncUrl(); renderEye();
 }
@@ -457,8 +459,9 @@ function measure() {
 /** Proper motion from the centre of light in every exposure where the source is clearly detected. */
 function fitMotion() {
   const s = S.sel, mid = (S.size - 1) / 2;
-  let pts = S.meas.filter(m => m.cen && m.cen[2] > 10 && m.wave >= S.wmin && m.wave <= S.wmax), stacked = false;     // the line fit clips the odd bad one
-  if (pts.length < 8) {          // too faint in single exposures: use its centre of light in each date's stack instead
+  const inWin = S.meas.filter(m => m.wave >= S.wmin && m.wave <= S.wmax);
+  let pts = inWin.filter(m => m.cen && m.cen[2] > 10), stacked = false;     // the line fit clips the odd bad one
+  if (pts.length < 8 || pts.length < 0.5 * inWin.length) {          // too faint in single exposures: use its centre of light in each date's stack instead
     pts = S.frames.filter(Boolean).map(f => {
       const fake = { img: f.img, cat: new Uint8Array(S.size * S.size), noise: S.lim.sig, mjd: f.mjd, epoch: f.epoch.i };
       const cen = K.centroid(fake, S.size, ...selGrid(f.mjd));
@@ -472,6 +475,10 @@ function fitMotion() {
   const east = pts.map(m => (mid - m.cen[0]) * K.PIX), north = pts.map(m => (m.cen[1] - mid) * K.PIX);
   const fe = K.lineFit(t, east), fn = K.lineFit(t, north);
   if (!fe || !fn) return null;
+  if (stacked) {                 // three or four points cannot show their own scatter: add the position error a faint dot really has
+    const extra = K.PIX * 1.5 / Math.min(...pts.map(m => m.cen[2])) / Math.max(0.2, Math.max(...t) - Math.min(...t));
+    fe.eb = Math.hypot(fe.eb, extra); fn.eb = Math.hypot(fn.eb, extra);
+  }
   return { pts, t, east, north, fe, fn, stacked, pe: fe.b, pn: fn.b, total: Math.hypot(fe.b, fn.b), err: Math.hypot(fe.eb, fn.eb), pa: (Math.atan2(fe.b, fn.b) * 180 / Math.PI + 360) % 360 };
 }
 
@@ -517,7 +524,8 @@ function drawSpectrum() {
   const line = spec.med.map((v, i) => [xw((i + 0.5) / spec.n), v / u]).filter(p => isFinite(p[1]));
   const good = usable.filter(m => !m.flagged);
   scatter($('#ch-spec'), {
-    points: usable.map(m => ({ x: m.wave, y: m.flux / u, e: m.err / u, color: epochColor(m.e.epoch), hollow: m.flagged || m.sat, data: m,
+    empty: 'Core saturated in every exposure: no spectrum',
+    points: (line.length ? usable : []).map(m => ({ x: m.wave, y: m.flux / u, e: m.err / u, color: epochColor(m.e.epoch), hollow: m.flagged || m.sat, data: m,
       tip: `${m.wave.toFixed(3)} µm · ${fmtDate(m.e.mjd)}\n${(m.flux / u).toFixed(dp)} ± ${(m.err / u).toFixed(dp)} ${unit}${m.flux > 0 ? ` (AB ${K.abMag(m.flux).toFixed(2)})` : ''}${m.flagged ? '\nflagged pixel in aperture' : m.sat ? '\nnear saturation' : ''}` })),
     lines: [{ pts: line, color: css('--sel'), width: 1.5 }],
     bands: K.DET.map(([x0, x1], i) => ({ x0, x1, color: detColor(i + 1) })),
@@ -564,7 +572,7 @@ function drawTimeChart() {
   // brightness over time: each point divided by the source's own typical brightness at that wavelength,
   // so all colours in the window count toward one curve. Saturated stars use their unsaturated outer light.
   const val = s.saturated ? m => m.wing : m => (m.flagged ? NaN : m.flux), spec = medianSpectrum(val);
-  const pts = S.meas.filter(m => !m.flagged && m.wave >= S.wmin && m.wave <= S.wmax).map(m => ({ m, rel: val(m) / spec.at(m.wave) })).filter(p => isFinite(p.rel) && spec.at(p.m.wave) > 0);
+  const pts = S.meas.filter(m => (s.saturated || !m.flagged) && m.wave >= S.wmin && m.wave <= S.wmax).map(m => ({ m, rel: val(m) / spec.at(m.wave) })).filter(p => isFinite(p.rel) && spec.at(p.m.wave) > 0);
   const means = S.search.epochs.map(ep => { const v = pts.filter(p => p.m.e.epoch === ep.i); return v.length >= 3 ? [K.median(v.map(p => p.m.e.mjd)), K.median(v.map(p => p.rel))] : null; }).filter(Boolean);
   scatter($('#ch-time'), {
     points: pts.map(p => ({ x: p.m.e.mjd, y: p.rel, color: epochColor(p.m.e.epoch), tip: `${fmtDate(p.m.e.mjd)} · ${p.m.wave.toFixed(2)} µm\n${p.rel.toFixed(2)} × its average` })),
@@ -691,24 +699,39 @@ function saveVideo() {
 }
 
 // ---------- wider sky (Aladin Lite), loaded only when opened ----------
-let aladin = null;
+// The atlas code comes from the jsDelivr mirror of the aladin-lite package (pinned), the sky images from NASA/IPAC IRSA,
+// and the catalogue points from what this page has already loaded, so it does not depend on the CDS servers being up.
+const ALADIN = 'https://cdn.jsdelivr.net/npm/aladin-lite@3.8.2/dist/aladin.js';
+const HIPS = { 'AllWISE colour (NASA WISE)': 'https://irsa.ipac.caltech.edu/data/hips/CDS/AllWISE/RGB-W4-W2-W1', '2MASS colour': 'https://irsa.ipac.caltech.edu/data/hips/CDS/2MASS/Color',
+  'DSS2 visible light': 'https://irsa.ipac.caltech.edu/data/hips/CDS/DSS2/color' };
+let aladin = null, AL = null;
 async function wider() {
   const t = S.target, note = $('#wide-note');
+  note.textContent = 'Loading the sky atlas…';
   try {
-    if (!window.A) await new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'https://aladin.cds.unistra.fr/AladinLite/api/v3/latest/aladin.js'; s.onload = ok; s.onerror = no; document.head.append(s); setTimeout(no, 15000); });
-    await window.A.init;
-    const fov = S.size * K.PIX / 3600;
-    if (!aladin) aladin = window.A.aladin('#aladin', { survey: 'P/allWISE/color', cooFrame: 'ICRSd', showLayersControl: true, showCooGridControl: false, showFullscreenControl: false });
+    if (!AL) { const m = await import(ALADIN); AL = m.default || window.A; await AL.init; }
+    const fov = S.size * K.PIX / 3600, first = Object.keys(HIPS)[0];
+    if (!aladin) {
+      aladin = AL.aladin('#aladin', { survey: HIPS[first], cooFrame: 'ICRSd', showLayersControl: false, showCooGridControl: false, showFullscreenControl: false, showProjectionControl: false, showSimbadPointerControl: false });
+      const pick = document.createElement('select');
+      pick.setAttribute('aria-label', 'Sky survey');
+      for (const k in HIPS) pick.add(new Option(k, HIPS[k]));
+      pick.onchange = () => aladin.setBaseImageLayer(pick.value);
+      note.before(pick);
+    }
     aladin.gotoRaDec(t.ra, t.dec); aladin.setFoV(fov * 4);
-    const box = window.A.graphicOverlay({ color: '#ffffff', lineWidth: 2 });
-    aladin.removeLayers?.(); aladin.addOverlay(box);
-    const h = fov / 2, cd = Math.cos(t.dec * Math.PI / 180);
-    box.add(window.A.polygon([[t.ra - h / cd, t.dec - h], [t.ra + h / cd, t.dec - h], [t.ra + h / cd, t.dec + h], [t.ra - h / cd, t.dec + h]]));
-    aladin.addCatalog(window.A.catalogFromVizieR('I/355/gaiadr3', `${t.ra} ${t.dec}`, fov, { onClick: 'showTable', color: '#6EE7B7', name: 'Gaia DR3' }));
-    aladin.addCatalog(window.A.catalogFromVizieR('II/328/allwise', `${t.ra} ${t.dec}`, fov, { onClick: 'showTable', color: '#F5BE4A', name: 'AllWISE' }));
-    note.textContent = 'AllWISE (NASA WISE) colour image from the Aladin sky atlas, with Gaia DR3 and AllWISE catalogue points. The white square is the field shown above. Use the layers button to switch to 2MASS or DSS.';
-  } catch {
-    note.textContent = 'The Aladin sky atlas (CDS, Strasbourg) did not load. Everything else on this page works without it.';
+    aladin.removeLayers?.();
+    const box = AL.graphicOverlay({ color: '#ffffff', lineWidth: 2 }), h = fov / 2, cd = Math.cos(t.dec * Math.PI / 180);
+    aladin.addOverlay(box);
+    box.add(AL.polygon([[t.ra - h / cd, t.dec - h], [t.ra + h / cd, t.dec - h], [t.ra + h / cd, t.dec + h], [t.ra - h / cd, t.dec + h]]));
+    for (const [src, color] of [['Gaia DR3', '#6EE7B7'], ['SIMBAD', '#ffffff']]) {
+      const cat = AL.catalog({ name: src, color, sourceSize: src === 'SIMBAD' ? 12 : 8, shape: 'circle', onClick: 'showPopup' });
+      aladin.addCatalog(cat);
+      cat.addSources(S.catalog.filter(o => o.src === src).map(o => { const [ra, dec] = K.propagate(o, K.REF_MJD); return AL.source(ra, dec, { name: o.name, catalogue: src, motion: `${totalPm(o).toFixed(2)} arcsec/yr` }); }));
+    }
+    note.textContent = 'The wider neighbourhood from the Aladin sky atlas, with sky images served by NASA/IPAC IRSA. The white square is the field shown above; circles are Gaia DR3 stars and SIMBAD objects at their 2025 positions.';
+  } catch (e) {
+    note.textContent = 'The sky atlas did not load. Everything else on this page works without it.';
   }
 }
 
