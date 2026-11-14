@@ -26,6 +26,6 @@ class Dev(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8791
     print(f"http://localhost:{port}")
     ThreadingHTTPServer(("", port), Dev).serve_forever()

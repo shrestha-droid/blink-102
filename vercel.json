@@ -1,3 +1,8 @@
 {
-  "functions": { "api/frames.py": { "maxDuration": 120 }, "api/search.py": { "maxDuration": 120 }, "api/catalog.py": { "maxDuration": 120 } }
+  "framework": null,
+  "functions": {
+    "api/frames.py": { "maxDuration": 120 },
+    "api/search.py": { "maxDuration": 120 },
+    "api/catalog.py": { "maxDuration": 120 }
+  }
 }
