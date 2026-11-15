@@ -496,6 +496,10 @@ function renderPlates() {
   [...$('#plates').querySelectorAll('.plate')].forEach((b, i) => {
     const f = S.frames[i];
     b.setAttribute('aria-selected', i === S.frame);
+    if (i === S.frame) {             // keep the current date in view as the blink moves along
+      const box = $('#plates'), l = b.offsetLeft - box.offsetLeft;
+      if (l < box.scrollLeft || l + b.offsetWidth > box.scrollLeft + box.clientWidth) box.scrollTo({ left: l - (box.clientWidth - b.offsetWidth) / 2, behavior: 'smooth' });
+    }
     b.classList.toggle('empty', !f);
     paint(b.firstChild, f);
     b.lastChild.textContent = f ? `${f.count} stacked` : '—';
