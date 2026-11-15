@@ -22,7 +22,7 @@ const STORY = {
 const OTYPE = { '*': 'Star', 'BD*': 'Brown dwarf', 'BY*': 'Spotted variable star', 'Mi*': 'Pulsating red giant', 'TT*': 'Young star', 'Y*O': 'Young star', 'Or*': 'Young variable star',
   'PM*': 'Fast-moving star', 'HPM*': 'Fast-moving star', 'WD*': 'White dwarf', 'G': 'Galaxy', 'QSO': 'Quasar', 'V*': 'Variable star', 'EB*': 'Eclipsing binary', 'RG*': 'Red giant',
   'C*': 'Carbon star', 'LP*': 'Long-period variable', 'Ce*': 'Cepheid', 'RR*': 'RR Lyrae star', 'HII': 'Star-forming cloud', 'GlC': 'Globular cluster', 'OpC': 'Open cluster',
-  'PN': 'Planetary nebula', 'Em*': 'Emission-line star', 'LM*': 'Low-mass star', 'SB*': 'Double star', '**': 'Double star', 'AGB*': 'Giant star', 'Ae*': 'Young hot star' };
+  'PN': 'Planetary nebula', 's*r': 'Red supergiant', 's*b': 'Blue supergiant', 'Er*': 'Flare star', 'No*': 'Nova', 'SNR': 'Supernova remnant', 'Em*': 'Emission-line star', 'LM*': 'Low-mass star', 'SB*': 'Double star', '**': 'Double star', 'AGB*': 'Giant star', 'Ae*': 'Young hot star' };
 const PRESET_NOTE = { "Barnard's Star": 'fastest-moving star', 'eps Indi B': 'brown dwarf pair', 'WISE 0855-0714': 'coldest brown dwarf known', 'RW Aur': 'young star that dims', 'R Dra': 'pulsing red giant',
   'Luhman 16': 'nearest brown dwarfs', '2MASS 0415-0935': 'methane-rich brown dwarf' };
 const PRESET_QUERY = { "Barnard's Star": "Barnard's star", 'eps Indi B': 'eps Ind B', 'WISE 0855-0714': 'WISE J085510.83-071442.5' };
@@ -104,7 +104,7 @@ function renderSuggest() {
 }
 function pickSuggestion(e) {
   $('#q').value = e.display || e.n; $('#suggest').hidden = true; $('#q').setAttribute('aria-expanded', false); $('#q').blur();
-  go(e.go, e.display ? { display: e.display } : {});
+  go(e.go, e.display ? { display: e.display, kind: (e.t || '').split(' · ')[0] } : {});
 }
 function initSuggest() {
   const input = $('#q'), list = $('#suggest');
@@ -143,7 +143,7 @@ function renderStory() {
   const o = t.obj, st = STORY[t.name], year = new Date().getUTCFullYear(), facts = [];
   $('#st-name').textContent = t.name || 'A patch of sky';
   const ly = o?.plx > 0.3 ? 3261.56 / o.plx : null;
-  $('#st-kicker').textContent = [st?.[0] || OTYPE[o?.type] || (o ? 'Catalogued object' : 'Your coordinates'), ly && `${ly < 10 ? ly.toFixed(1) : ly < 1000 ? Math.round(ly) : Math.round(ly / 100) * 100} light-years away`].filter(Boolean).join(' · ');
+  $('#st-kicker').textContent = [st?.[0] || t.kind || OTYPE[o?.type] || (o ? 'Catalogued object' : 'Your coordinates'), ly && `${ly < 10 ? ly.toFixed(1) : ly < 1000 ? Math.round(ly) : Math.round(ly / 100) * 100} light-years away`].filter(Boolean).join(' · ');
   $('#st-line').textContent = st?.[1] || (o ? `${K.sexa(t.ra, t.dec)}. Every exposure SPHEREx has released of it, lined up and stacked by date. Click any dot to measure it.`
     : `${K.sexa(t.ra, t.dec)}. Every exposure SPHEREx has released of this spot, lined up and stacked by date. Click any dot to measure it.`);
   if (ly) {
@@ -160,7 +160,7 @@ function renderStory() {
 }
 
 // ---------- choosing a target ----------
-async function go(text, { keepView = false, given = null, display = null } = {}) {
+async function go(text, { keepView = false, given = null, display = null, kind = null } = {}) {
   text = text.trim();
   if (!text) return;
   notice('');
@@ -173,7 +173,7 @@ async function go(text, { keepView = false, given = null, display = null } = {})
       const obj = given || hit?.obj || await Cat.resolveName(PRESET_QUERY[text] || text);
       if (!obj) return notice(`No object called “${esc(text)}” was found. Try coordinates, for example <code>269.4463 4.7679</code>.`, true);
       const [ra, dec] = K.propagate(obj, K.REF_MJD);
-      t = { name: display || hit?.name || [...PRESETS, ...MORE].find(p => p.toLowerCase() === text.toLowerCase()) || obj.name, obj, ra: round5(ra), dec: round5(dec) };
+      t = { kind, name: display || hit?.name || [...PRESETS, ...MORE].find(p => p.toLowerCase() === text.toLowerCase()) || obj.name, obj, ra: round5(ra), dec: round5(dec) };
       const moved = Math.hypot((ra - obj.ra) * Math.cos(dec * Math.PI / 180), dec - obj.dec) * 60;
       if (moved > 0.2) notice(`${esc(t.name)} has moved ${moved.toFixed(1)}′ since 2000 (${totalPm(obj).toFixed(1)}″ per year). Showing where it is now.`);
     }
