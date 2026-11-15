@@ -6,7 +6,7 @@
 
 Live: **https://blink-102.vercel.app**
 
-Built during NASA Space Apps Challenge 2026 (14–15 November 2026) for the challenge **"Planet X and SPHEREx"**.
+Built by **Team Astronaughty** (Shrestha Pandey, Yeshika Murjani, Padmesh Joshi, Bhalendu Shrivastava, Anmol Tiwari) during NASA Space Apps Challenge 2026 (14–15 November 2026) for the challenge **"Planet X and SPHEREx"**.
 
 ## What it does
 
@@ -144,7 +144,6 @@ This project was built with heavy AI assistance, as the Space Apps rules allow, 
   - proposed the technical design, the interface design, the name "Blink 102" and the blink-comparator framing;
   - ran the checks reported in this README and wrote its first draft.
 - **What the AI did not generate:** no images, video or audio. Every picture on the site is drawn from NASA SPHEREx data.
-- **What people did:** Shrestha Pandey chose the challenge, confirmed the rules with the organizers, directed the build, decided its scope and approved each stage.
-- *Team: add here, before submitting, what each of you did yourselves (testing on the targets, usability tests, the video, the write-up).*
+- **What people did:** Team Astronaughty (Shrestha Pandey, Yeshika Murjani, Padmesh Joshi, Bhalendu Shrivastava, Anmol Tiwari) chose the challenge. Shrestha Pandey confirmed the rules with the organizers, directed the build, set its scope and reviewed each stage.
 
 No code from any earlier prototype was reused; this repository was started during the event.
