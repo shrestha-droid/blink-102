@@ -31,7 +31,9 @@ try { const t = localStorage.getItem('blink-theme'); if (t) document.querySelect
   <form id="search" role="search">
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>
     <label class="vh" for="q">Object name or coordinates</label>
-    <input id="q" type="search" placeholder="Search any star, or paste coordinates" autocomplete="off" spellcheck="false" enterkeyhint="go">
+    <input id="q" type="search" placeholder="Search any star, or paste coordinates" autocomplete="off" spellcheck="false" enterkeyhint="go"
+      role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggest">
+    <ul id="suggest" class="suggest" role="listbox" aria-label="Suggestions" hidden></ul>
   </form>
   <nav class="mast-actions">
     <button id="b-tour" type="button" class="cta">Take the tour</button>

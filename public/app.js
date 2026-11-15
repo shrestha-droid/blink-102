@@ -63,6 +63,68 @@ const round5 = v => Math.round(v * 1e5) / 1e5;
 function notice(html, err = false) { const n = $('#notice'); n.hidden = !html; n.className = 'notice' + (err ? ' err' : ''); n.innerHTML = html || ''; }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+// ---------- search suggestions: our targets first, then named nearby stars, brown dwarfs and famous objects ----------
+let NAMES = [];
+const norm = s => s.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9+\-]/g, '');
+const lyText = ly => (ly ? `${ly < 10 ? ly.toFixed(1) : Math.round(ly)} light-years` : '');
+function suggestions(text) {
+  const q = text.trim(), nq = norm(q), out = [];
+  const ALIAS = { "Barnard's Star": "NAME Barnard's star", 'eps Indi B': '* eps Ind B', 'WISE 0855-0714': 'WISEA J085510.74-071442.5', 'RW Aur': 'V* RW Aur', 'R Dra': 'V* R Dra',
+    'Luhman 16': 'NAME Luhman 16', '2MASS 0415-0935': '2MASSI J0415195-093506' };      // so the catalogue's copy of a card is not listed twice
+  const ours = [...PRESETS, ...MORE].map(n => ({ n, go: n, q: ALIAS[n], t: STORY[n][0], c: STORY[n][2], tag: PRESETS.includes(n) ? 'challenge target' : 'more to explore', ours: true }));
+  if (!q) return [{ head: 'Try one of these' }, ...ours];
+  const co = K.parseCoords(q);
+  if (co) out.push({ n: K.sexa(co.ra, co.dec), go: q, t: `RA ${co.ra.toFixed(4)}°, Dec ${co.dec.toFixed(4)}°`, kind: 'co', tag: 'coordinates' });
+  const score = e => {
+    const a = norm(e.n), words = e.n.toLowerCase().split(/[\s\-_()]+/).map(norm);
+    let s = a === nq ? 6 : a.startsWith(nq) ? 4 : words.some(w => w.startsWith(nq)) ? 3 : a.includes(nq) ? 1.5 : nq.length >= 5 && norm(e.q || '').includes(nq) ? 1 : 0;      // catalogue ids only for longer queries
+    return s && (s + (e.ours ? 2 : 0) + (e.ly ? 1 / (1 + e.ly / 20) : 0.3));
+  };
+  if (nq.length >= 1) {
+    const hits = [...ours, ...NAMES.map(e => ({ n: e.n, go: e.q, display: e.n, t: [e.t, lyText(e.ly)].filter(Boolean).join(' · '), q: e.q }))]
+      .map(e => [score(e), e]).filter(x => x[0] > 0).sort((a, b) => b[0] - a[0]).map(x => x[1]);
+    // one row per object: the same star often has several names, and our own cards win over catalogue entries
+    const key = n => norm(n).replace(/s/g, ''), seenQ = new Set(), seenN = new Set(), uniq = [];
+    for (const e of hits) { const k = key(e.n); if (seenN.has(k) || (e.q && seenQ.has(e.q))) continue; seenN.add(k); if (e.q) seenQ.add(e.q); uniq.push(e); }
+    hits.length = 0; hits.push(...uniq.slice(0, 8));
+    out.push(...hits);
+  }
+  if (!co && q.length >= 2 && !out.some(e => norm(e.n) === nq)) out.push({ n: `Look up “${q}”`, go: q, t: 'search SIMBAD and NED by name', kind: 'look' });
+  return out;
+}
+function renderSuggest() {
+  const input = $('#q'), list = $('#suggest'), items = S.sugg = suggestions(input.value);
+  const mark = n => { const q = input.value.trim(); const i = q && !K.parseCoords(q) ? n.toLowerCase().indexOf(q.toLowerCase()) : -1; return i < 0 ? esc(n) : `${esc(n.slice(0, i))}<mark>${esc(n.slice(i, i + q.length))}</mark>${esc(n.slice(i + q.length))}`; };
+  list.innerHTML = items.map((e, i) => e.head ? `<li class="h" role="presentation">${esc(e.head)}</li>` :
+    `<li role="option" id="sg${i}" data-i="${i}" aria-selected="${i === S.sel_i}"><i class="dot ${e.kind || ''}" style="${e.c ? `--c:${e.c}` : ''}"></i><b>${mark(e.n)}</b><em>${esc(e.tag || '')}</em><small>${esc(e.t || '')}</small></li>`).join('');
+  const open = items.some(e => !e.head) && document.activeElement === input;
+  list.hidden = !open; input.setAttribute('aria-expanded', open);
+  input.setAttribute('aria-activedescendant', open && S.sel_i >= 0 ? `sg${S.sel_i}` : '');
+  list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+}
+function pickSuggestion(e) {
+  $('#q').value = e.display || e.n; $('#suggest').hidden = true; $('#q').setAttribute('aria-expanded', false); $('#q').blur();
+  go(e.go, e.display ? { display: e.display } : {});
+}
+function initSuggest() {
+  const input = $('#q'), list = $('#suggest');
+  fetch('names.json').then(r => r.json()).then(j => { NAMES = j; }).catch(() => {});
+  S.sel_i = -1;
+  input.addEventListener('focus', () => { S.sel_i = -1; input.select(); renderSuggest(); });
+  input.addEventListener('input', () => { S.sel_i = -1; renderSuggest(); });
+  input.addEventListener('blur', () => setTimeout(() => { list.hidden = true; input.setAttribute('aria-expanded', false); }, 120));
+  input.addEventListener('keydown', ev => {
+    const opts = (S.sugg || []).map((e, i) => (e.head ? -1 : i)).filter(i => i >= 0);
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      const k = opts.indexOf(S.sel_i), n = ev.key === 'ArrowDown' ? (k + 1) % opts.length : (k <= 0 ? opts.length : k) - 1;
+      S.sel_i = opts[n]; renderSuggest();
+    } else if (ev.key === 'Enter' && S.sel_i >= 0 && !list.hidden) { ev.preventDefault(); pickSuggestion(S.sugg[S.sel_i]); }
+    else if (ev.key === 'Escape') { list.hidden = true; input.setAttribute('aria-expanded', false); }
+  });
+  list.addEventListener('mousedown', ev => { const li = ev.target.closest('[role=option]'); if (li) { ev.preventDefault(); pickSuggestion(S.sugg[+li.dataset.i]); } });
+}
+
 // ---------- Surprise me: a random star or brown dwarf within 65 light-years that moves more than 1″ a year ----------
 let moverPool = null;
 async function surprise() {
@@ -98,7 +160,7 @@ function renderStory() {
 }
 
 // ---------- choosing a target ----------
-async function go(text, { keepView = false, given = null } = {}) {
+async function go(text, { keepView = false, given = null, display = null } = {}) {
   text = text.trim();
   if (!text) return;
   notice('');
@@ -111,7 +173,7 @@ async function go(text, { keepView = false, given = null } = {}) {
       const obj = given || hit?.obj || await Cat.resolveName(PRESET_QUERY[text] || text);
       if (!obj) return notice(`No object called “${esc(text)}” was found. Try coordinates, for example <code>269.4463 4.7679</code>.`, true);
       const [ra, dec] = K.propagate(obj, K.REF_MJD);
-      t = { name: hit?.name || [...PRESETS, ...MORE].find(p => p.toLowerCase() === text.toLowerCase()) || obj.name, obj, ra: round5(ra), dec: round5(dec) };
+      t = { name: display || hit?.name || [...PRESETS, ...MORE].find(p => p.toLowerCase() === text.toLowerCase()) || obj.name, obj, ra: round5(ra), dec: round5(dec) };
       const moved = Math.hypot((ra - obj.ra) * Math.cos(dec * Math.PI / 180), dec - obj.dec) * 60;
       if (moved > 0.2) notice(`${esc(t.name)} has moved ${moved.toFixed(1)}′ since 2000 (${totalPm(obj).toFixed(1)}″ per year). Showing where it is now.`);
     }
@@ -1090,7 +1152,8 @@ function init() {
   if (params.has('embed')) document.body.classList.add('embed');
   buildStrip();
 
-  $('#search').onsubmit = ev => { ev.preventDefault(); go($('#q').value); };
+  $('#search').onsubmit = ev => { ev.preventDefault(); $('#suggest').hidden = true; $('#q').blur(); go($('#q').value); };
+  initSuggest();
   const restack = () => { computeFrames(); renderAll(); syncUrl(); };
   keys.d = toggle('#t-diff', 'diff', () => { if (S.diff && S.rgb) { S.rgb = false; $('#t-rgb').setAttribute('aria-pressed', false); } restack(); });
   keys.c = toggle('#t-rgb', 'rgb', () => { if (S.rgb && S.diff) { S.diff = false; $('#t-diff').setAttribute('aria-pressed', false); } restack(); });
