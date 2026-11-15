@@ -3,7 +3,8 @@
 import { readFileSync } from 'node:fs';
 import * as K from '../public/sky.js';
 
-const index = JSON.parse(readFileSync('public/cache/index.json'));
+const only = process.argv.slice(2);           // optional: names to check
+const index = JSON.parse(readFileSync('public/cache/index.json')).filter(t => !only.length || only.includes(t.name));
 for (const t of index) {
   const dir = `public/cache/${t.slug}/`, man = JSON.parse(readFileSync(dir + 'manifest.json')), size = t.size, c = { ra: t.ra, dec: t.dec, size };
   const epochOf = new Map(man.search.exposures.map(e => [e.key, e.epoch])), exps = [];

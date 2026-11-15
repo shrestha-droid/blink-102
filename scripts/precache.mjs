@@ -6,7 +6,9 @@ import { planChunks, propagate, REF_MJD } from '../public/sky.js';
 
 const API = process.argv.slice(2).find(a => a.startsWith('http')) || 'https://blink-102.vercel.app';
 const SIZE = 64, FULL_DEPTH_LIMIT = 600;
-const TARGETS = [["Barnard's Star", "Barnard's star"], ['eps Indi B', 'eps Ind B'], ['WISE 0855-0714', 'WISE J085510.83-071442.5'], ['RW Aur', 'RW Aur'], ['R Dra', 'R Dra']];
+const TARGETS = [["Barnard's Star", "Barnard's star"], ['eps Indi B', 'eps Ind B'], ['WISE 0855-0714', 'WISE J085510.83-071442.5'], ['RW Aur', 'RW Aur'], ['R Dra', 'R Dra'],
+  // a second row: kept only because they pass scripts/validate.mjs (motion matches the catalogue, clearly detected)
+  ['Luhman 16', 'Luhman 16'], ['2MASS 0415-0935', '2MASS J04151954-0935066']];
 const tag = (xml, t) => xml.match(new RegExp(`<${t}>([^<]*)`))?.[1];
 const round5 = v => Math.round(v * 1e5) / 1e5;
 

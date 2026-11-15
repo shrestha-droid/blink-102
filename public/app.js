@@ -9,18 +9,22 @@ const probe = document.body.appendChild(Object.assign(document.createElement('i'
 const css = v => { probe.style.color = `var(${v})`; return getComputedStyle(probe).color; };      // resolved for the current theme
 const API = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? new URLSearchParams(location.search).get('api') || '' : '';   // dev only
 const PRESETS = ["Barnard's Star", 'eps Indi B', 'WISE 0855-0714', 'RW Aur', 'R Dra'];
+let MORE = [];      // a second row: filled from the precached targets that passed validation
 const STORY = {
   "Barnard's Star": ['Red dwarf', 'The fastest-moving star in our sky, and one of the Sun’s nearest neighbours. Watch it step north between SPHEREx’s passes.', 'var(--d3)'],
   'eps Indi B': ['Pair of brown dwarfs', 'Two brown dwarfs circling each other, far out from their star. Too small to shine by fusion, they glow with heat left over from their birth.', 'var(--d4)'],
   'WISE 0855-0714': ['Coldest brown dwarf known', 'Found in 2014 in images from NASA’s WISE, it is about as cold as an ordinary day on Earth. Invisible in visible light: slide the colour bar to the long end and it appears.', 'var(--d6)'],
   'RW Aur': ['Young star', 'A star still wrapped in the disc of gas and dust it formed from. When material from that disc passes in front of it, it dims.', 'var(--d2)'],
   'R Dra': ['Pulsating red giant', 'A dying star that swells and shrinks about every eight months, brightening and fading as it goes.', 'var(--d5)'],
+  'Luhman 16': ['Nearest brown dwarfs', 'The closest brown dwarfs to the Sun: a pair 6.5 light-years away, found in 2013 by Kevin Luhman in images from NASA’s WISE.', 'var(--d4)'],
+  '2MASS 0415-0935': ['T-type brown dwarf', 'One of the coldest T-type brown dwarfs, 19 light-years away. Its spectrum is carved deep by methane and water.', 'var(--d6)'],
 };
 const OTYPE = { '*': 'Star', 'BD*': 'Brown dwarf', 'BY*': 'Spotted variable star', 'Mi*': 'Pulsating red giant', 'TT*': 'Young star', 'Y*O': 'Young star', 'Or*': 'Young variable star',
   'PM*': 'Fast-moving star', 'HPM*': 'Fast-moving star', 'WD*': 'White dwarf', 'G': 'Galaxy', 'QSO': 'Quasar', 'V*': 'Variable star', 'EB*': 'Eclipsing binary', 'RG*': 'Red giant',
   'C*': 'Carbon star', 'LP*': 'Long-period variable', 'Ce*': 'Cepheid', 'RR*': 'RR Lyrae star', 'HII': 'Star-forming cloud', 'GlC': 'Globular cluster', 'OpC': 'Open cluster',
   'PN': 'Planetary nebula', 'Em*': 'Emission-line star', 'LM*': 'Low-mass star', 'SB*': 'Double star', '**': 'Double star', 'AGB*': 'Giant star', 'Ae*': 'Young hot star' };
-const PRESET_NOTE = { "Barnard's Star": 'fastest-moving star', 'eps Indi B': 'brown dwarf pair', 'WISE 0855-0714': 'coldest brown dwarf known', 'RW Aur': 'young star that dims', 'R Dra': 'pulsing red giant' };
+const PRESET_NOTE = { "Barnard's Star": 'fastest-moving star', 'eps Indi B': 'brown dwarf pair', 'WISE 0855-0714': 'coldest brown dwarf known', 'RW Aur': 'young star that dims', 'R Dra': 'pulsing red giant',
+  'Luhman 16': 'nearest brown dwarfs', '2MASS 0415-0935': 'methane-rich brown dwarf' };
 const PRESET_QUERY = { "Barnard's Star": "Barnard's star", 'eps Indi B': 'eps Ind B', 'WISE 0855-0714': 'WISE J085510.83-071442.5' };
 const MOLECULES = [{ x0: 1.33, x1: 1.5, label: 'H₂O' }, { x0: 1.75, x1: 2.05, label: 'H₂O' }, { x0: 3.2, x1: 3.65, label: 'CH₄' },
   { x0: 4.18, x1: 4.35, label: 'CO₂' }, { x0: 4.55, x1: 4.8, label: 'CO' }];
@@ -59,6 +63,17 @@ const round5 = v => Math.round(v * 1e5) / 1e5;
 function notice(html, err = false) { const n = $('#notice'); n.hidden = !html; n.className = 'notice' + (err ? ' err' : ''); n.innerHTML = html || ''; }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+// ---------- Surprise me: a random star or brown dwarf within 65 light-years that moves more than 1″ a year ----------
+let moverPool = null;
+async function surprise() {
+  try {
+    moverPool ??= await Cat.nearbyMovers();
+    if (!moverPool.length) throw new Error('empty list');
+    const o = moverPool[Math.floor(Math.random() * moverPool.length)];
+    go(o.name, { given: o });
+  } catch (e) { notice(`The catalogue did not answer (${esc(e.message)}). Try again in a moment, or search for a name.`, true); }
+}
+
 // ---------- the story card: who this is, in human terms ----------
 function renderStory() {
   const t = S.target;
@@ -83,7 +98,7 @@ function renderStory() {
 }
 
 // ---------- choosing a target ----------
-async function go(text, { keepView = false } = {}) {
+async function go(text, { keepView = false, given = null } = {}) {
   text = text.trim();
   if (!text) return;
   notice('');
@@ -93,10 +108,10 @@ async function go(text, { keepView = false } = {}) {
     if (co) t = { name: null, obj: null, ra: round5(co.ra), dec: round5(co.dec), typed: true };
     else {
       const hit = cacheIndex?.find(c => c.name.toLowerCase() === text.toLowerCase());
-      const obj = hit?.obj || await Cat.resolveName(PRESET_QUERY[text] || text);
+      const obj = given || hit?.obj || await Cat.resolveName(PRESET_QUERY[text] || text);
       if (!obj) return notice(`No object called “${esc(text)}” was found. Try coordinates, for example <code>269.4463 4.7679</code>.`, true);
       const [ra, dec] = K.propagate(obj, K.REF_MJD);
-      t = { name: hit?.name || PRESETS.find(p => p.toLowerCase() === text.toLowerCase()) || obj.name, obj, ra: round5(ra), dec: round5(dec) };
+      t = { name: hit?.name || [...PRESETS, ...MORE].find(p => p.toLowerCase() === text.toLowerCase()) || obj.name, obj, ra: round5(ra), dec: round5(dec) };
       const moved = Math.hypot((ra - obj.ra) * Math.cos(dec * Math.PI / 180), dec - obj.dec) * 60;
       if (moved > 0.2) notice(`${esc(t.name)} has moved ${moved.toFixed(1)}′ since 2000 (${totalPm(obj).toFixed(1)}″ per year). Showing where it is now.`);
     }
@@ -1074,7 +1089,7 @@ const keys = {};
 function init() {
   if (params.has('embed')) document.body.classList.add('embed');
   buildStrip();
-  for (const name of PRESETS) { const b = document.createElement('button'); b.type = 'button'; b.innerHTML = `<i style="--c:${STORY[name][2]}"></i><b>${esc(name)}</b><small>${PRESET_NOTE[name]}</small>`; b.dataset.name = name; b.onclick = () => go(name); $('#presets').append(b); }
+
   $('#search').onsubmit = ev => { ev.preventDefault(); go($('#q').value); };
   const restack = () => { computeFrames(); renderAll(); syncUrl(); };
   keys.d = toggle('#t-diff', 'diff', () => { if (S.diff && S.rgb) { S.rgb = false; $('#t-rgb').setAttribute('aria-pressed', false); } restack(); });
@@ -1166,9 +1181,23 @@ function init() {
 }
 function buildPlatesColors() { [...$('#plates').querySelectorAll('.plate')].forEach((b, i) => b.style.setProperty('--pc', epochColor(i))); }
 
+// the example targets, as cards
+function buildJourneys() {
+  $('#presets').replaceChildren();
+  const card = name => { const b = document.createElement('button'); b.type = 'button'; b.innerHTML = `<i style="--c:${STORY[name][2]}"></i><b>${esc(name)}</b><small>${PRESET_NOTE[name]}</small>`; b.dataset.name = name; b.onclick = () => go(name); return b; };
+  const label = text => Object.assign(document.createElement('span'), { className: 'j-lab', textContent: text });
+  $('#presets').append(label('Challenge targets'), ...PRESETS.map(card));
+  if (MORE.length) $('#presets').append(label('More to explore'), ...MORE.map(card));
+  const sb = document.createElement('button'); sb.type = 'button'; sb.className = 'surprise';
+  sb.innerHTML = '<i style="--c:var(--found)"></i><b>Surprise me</b><small>a random fast-moving neighbour</small>';
+  sb.onclick = surprise; $('#presets').append(sb);
+}
+
 async function start() {
   init();
   try { cacheIndex = await (await fetch('cache/index.json')).json(); } catch { cacheIndex = []; }
+  MORE = cacheIndex.map(c => c.name).filter(n => !PRESETS.includes(n) && STORY[n]);
+  buildJourneys();
   if (params.get('fov')) { S.size = Math.min(160, Math.max(24, +params.get('fov') || 64)); $('#t-fov').value = S.size; }
   if (params.get('wmin')) { S.wmin = Math.max(K.WMIN, +params.get('wmin')); S.wmax = Math.min(K.WMAX, +params.get('wmax') || K.WMAX); }
   if (params.get('mode') === 'difference') { S.diff = true; $('#t-diff').setAttribute('aria-pressed', true); }

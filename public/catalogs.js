@@ -44,6 +44,14 @@ export async function simbad(ra, dec, rDeg) {
     pmra: num(c[4]) || 0, pmde: num(c[5]) || 0, plx: num(c[6]) || 0, sp: c[7] || '', epoch: J2000, src: 'SIMBAD' }));
 }
 
+/** Nearby, fast-moving objects (closer than 20 parsecs, faster than 1"/yr): the pool for "Surprise me". */
+export async function nearbyMovers() {
+  const q = `SELECT TOP 2000 main_id,otype,ra,dec,pmra,pmdec,plx_value FROM basic WHERE plx_value > 50 AND pmra*pmra + pmdec*pmdec > 1000000 AND ra IS NOT NULL`;
+  const lines = (await get(`${SIMBAD}?request=doQuery&lang=adql&format=csv&query=${encodeURIComponent(q)}`, 30000)).trim().split('\n').slice(1);
+  return lines.map(csvLine).map(c => ({ name: c[0].replace(/^(NAME|V\*|\*)\s+/, '').replace(/\s+/g, ' '), type: c[1], ra: +c[2], dec: +c[3],
+    pmra: num(c[4]) || 0, pmde: num(c[5]) || 0, plx: num(c[6]) || 0, epoch: J2000, src: 'SIMBAD' })).filter(o => isFinite(o.ra));
+}
+
 /** Gaia DR3 stars (ESA). Positions are at epoch 2016.0. */
 export async function gaia(ra, dec, rArcmin) {
   try {

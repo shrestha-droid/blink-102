@@ -88,6 +88,11 @@ body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-even
 .journeys i { grid-row: span 2; width: 26px; height: 26px; border-radius: 50%; background: radial-gradient(circle at 40% 38%, #fff 0 10%, var(--c) 32%, transparent 72%); }
 .journeys b { font: italic 500 15px/1.15 var(--serif); }
 .journeys small { font-size: 11.5px; color: var(--mute); }
+.journeys { mask-image: linear-gradient(90deg, #000 calc(100% - 60px), transparent); padding-right: 60px; }
+.j-lab { flex: none; align-self: center; width: 72px; font: 500 9.5px/1.35 var(--sans); letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
+.j-lab:not(:first-child) { margin-left: 14px; padding-left: 14px; border-left: 1px solid var(--edge2); width: 86px; }
+.journeys .surprise { border-style: dashed; }
+.journeys .surprise i { background: conic-gradient(from 90deg, var(--d1), var(--d3), var(--d5), var(--d6), var(--d1)); -webkit-mask: radial-gradient(circle, #000 55%, transparent 58%); mask: radial-gradient(circle, #000 55%, transparent 58%); }
 
 /* layout */
 main { flex: 1; min-height: 0; display: grid; grid-template-columns: auto minmax(360px, 1fr); gap: 28px; padding: 0 28px 18px; }

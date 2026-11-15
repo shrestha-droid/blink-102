@@ -51,6 +51,17 @@ Measured with `node scripts/validate.mjs`, which uses the same routines as the p
 | **RW Aur** | Brightness changes between passes, differently at different wavelengths | 0.69 mag change at 3.8–5.0 µm, 0.12 mag over all colours (from its outer light) | irregular variable |
 | **R Dra** | Brightness swings over 17 monthly dates | 1.7 mag range; period 245 ± 61 days from two cycles (noise would do this less than 1 time in 100) | Mira variable, period ≈ 246 days |
 
+**More to explore.** Two extra targets on the page were chosen because SPHEREx measures them cleanly; candidates that failed the same checks were left out.
+
+| Target | Measured | Catalogue |
+|---|---|---|
+| **Luhman 16**, the nearest brown dwarfs (6.5 light-years) | 2.79 ± 0.08″/yr | 2.79″/yr |
+| **2MASS 0415−0935**, a T8 brown dwarf (19 light-years) | 2.28 ± 0.16″/yr; methane band 96 % deep; not in Gaia (too cold and faint for it) | 2.26″/yr |
+
+Left out after testing: DENIS 0817−6155 (motion direction disagreed), WISE 0830+2837 and WISE 1101+5400 (Backyard Worlds discoveries, too faint for single SPHEREx exposures), Teegarden's Star (only one sky pass released so far), UGPS 0722−0540 (only two passes; motion unreliable).
+
+**Surprise me** opens a random star or brown dwarf from SIMBAD that is closer than 65 light-years and moves faster than 1″ a year, fetched live.
+
 Motions are fitted to the centre of light in every single exposure, after removing the catalogue parallax.
 
 **Blind recovery of WISE 0855.** Starting from the challenge's own coordinates (its 2010 position) with the colour window on 3.8–5.0 µm, **Scan for movers** measures 24 sources and reports exactly one mover: WISE 0855, at 5.4 ± 1.0″/yr. The page also notices that a fast-moving catalogue object is now 2.1′ away and offers to recentre on it. On the eps Indi field the same scan finds eps Indi B at 4.48 ± 0.06″/yr.
