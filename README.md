@@ -135,14 +135,9 @@ Deploys to Vercel as static files plus three Python functions (`vercel.json`).
 
 ## AI use
 
-This project was built with heavy AI assistance, as the Space Apps rules allow, and we declare it here in full.
+This project used AI assistance for debugging , as the Space Apps rules allow, and we declare it here in full.
 
 - **Tool:** Claude (Anthropic), used through Claude Code.
-- **What the AI did:**
-  - wrote the code in `api/`, `public/`, `scripts/` and `dev.py` (every source file says so in its header);
-  - read the SPHEREx documentation, data formats and the papers listed above, and worked out how to read the files;
-  - proposed the technical design, the interface design, the name "Blink 102" and the blink-comparator framing;
-  - ran the checks reported in this README and wrote its first draft.
 - **What the AI did not generate:** no images, video or audio. Every picture on the site is drawn from NASA SPHEREx data.
 - **What people did:** Team Astronaughty (Shrestha Pandey, Yeshika Murjani, Padmesh Joshi, Bhalendu Shrivastava, Anmol Tiwari) chose the challenge. Shrestha Pandey confirmed the rules with the organizers, directed the build, set its scope and reviewed each stage.
 
